@@ -1,4 +1,9 @@
-use crate::concrete_ir::ConcreteContext;
+#[cfg(feature = "gc")]
+mod gc;
+#[cfg(feature = "gc")]
+pub use gc::GcContext;
+
+use crate::utils::ApInt;
 
 pub type OperationID = u32;
 pub type AttributeID = u32;
@@ -9,22 +14,21 @@ pub type RegionPosition = u32;
 
 pub trait Context {
     // IR
-    type Operation<'p>: Operation<'p, Self>;
-    type Attribute<'p>: Attribute<'p, Self>;
-    type Block<'p>: Block<'p, Self>;
-    type Region<'p>: Region<'p, Self>;
-    type Value<'p>: Value<'p, Self>;
+    type Operation<'a>: Operation<'a, Self>;
+    type Attribute<'a>: Attribute<'a, Self>;
+    type Block<'a>: Block<'a, Self>;
+    type Region<'a>: Region<'a, Self>;
+    type Value<'a>: Value<'a, Self>;
 
     // Rewriting
     type Accessor<'rewrite>: Accessor<'rewrite, Self>;
     type Rewriter<'rewrite>: Rewriter<'rewrite, Self>;
-    type OpaqueOperation<'rewrite>;
+
+    type OpaqueOperation<'rewrite>: OpaqueOperation<'rewrite, Self>;
     type OpaqueAttr<'rewrite>;
     type OpaqueBlock<'rewrite>;
     type OpaqueRegion<'rewrite>;
     type OpaqueValue<'rewrite>;
-
-    fn apply_pattern<P: RewritePattern<Self>>(&mut self) -> P::Result;
 }
 
 //============================================================================//
@@ -32,40 +36,28 @@ pub trait Context {
 //============================================================================//
 
 pub trait RewritePattern<C: Context + ?Sized> {
-    type Result;
-
-    fn match_and_rewrite(accessor: C::Accessor<'_>) -> Self::Result;
+    fn match_and_rewrite(&self, accessor: C::Accessor<'_>);
 }
 
 pub trait Accessor<'rewrite, C: Context + ?Sized> {
-    fn get_op(&self) -> C::Operation<'_>;
+    fn get_root(&self) -> C::Operation<'_>;
 
     fn get_placeholder_value(&self, r#type: C::Attribute<'_>) -> C::Value<'_>;
 
-    fn get_integer_type(&self, width: u32) -> C::Attribute<'_>;
-    fn get_string_type(&self) -> C::Attribute<'_>;
-
-    fn create_op<'a>(
-        &'a self,
-        operation: OperationID,
-        operands: &[C::Value<'a>],
-        attributes: &[(&str, C::Attribute<'a>)],
-        result_types: &[C::Attribute<'a>],
-        successors: &[C::Block<'a>],
-        regions: &[C::Region<'a>],
-    ) -> C::Operation<'a>;
-
-    fn create_attribute<'a>(
-        &'a self,
-        attribute: AttributeID,
-        parameters: &[C::Attribute<'_>],
-    ) -> C::Attribute<'a>;
-
-    fn create_block<'a>(&'a self, operations: &[C::Operation<'a>]) -> C::Block<'a>;
-
-    fn create_region<'a>(&'a self, blocks: &[C::Block<'_>]) -> C::Region<'a>;
+    fn get_int_data_attr(&self, data: ApInt) -> C::Attribute<'_>;
+    fn get_string_attr(&self, data: impl ToString) -> C::Attribute<'_>;
 
     fn rewrite(self) -> C::Rewriter<'rewrite>;
+    fn apply_pattern<P: RewritePattern<C>>(
+        &mut self,
+        pattern: &P,
+        operation: C::OpaqueOperation<'rewrite>,
+    );
+    fn apply_pattern_dyn(
+        &mut self,
+        pattern: &dyn RewritePattern<C>,
+        operation: C::OpaqueOperation<'rewrite>,
+    );
 }
 
 pub trait Rewriter<'rewrite, C: Context + ?Sized> {
@@ -81,6 +73,40 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
         op: C::OpaqueOperation<'rewrite>,
         after: C::OpaqueOperation<'rewrite>,
     );
+    fn insert_op_at_start(
+        &self,
+        op: C::OpaqueOperation<'rewrite>,
+        at_start_of: C::OpaqueBlock<'rewrite>,
+    );
+    fn insert_op_at_end(
+        &self,
+        op: C::OpaqueOperation<'rewrite>,
+        at_end_of: C::OpaqueBlock<'rewrite>,
+    );
+
+    fn create_op(
+        &self,
+        operation: OperationID,
+        operands: &[C::OpaqueValue<'rewrite>],
+        result_types: &[C::OpaqueAttr<'rewrite>],
+        attributes: &[(impl ToString, C::OpaqueAttr<'rewrite>)],
+        successors: &[C::OpaqueBlock<'rewrite>],
+        regions: &[C::OpaqueRegion<'rewrite>],
+    ) -> C::OpaqueOperation<'rewrite>;
+
+    fn create_attribute(
+        &self,
+        attribute: AttributeID,
+        parameters: &[C::OpaqueAttr<'rewrite>],
+    ) -> C::OpaqueAttr<'rewrite>;
+
+    fn create_block(
+        &self,
+        arguments: &[C::OpaqueAttr<'rewrite>],
+        operations: &[C::OpaqueOperation<'rewrite>],
+    ) -> C::OpaqueBlock<'rewrite>;
+
+    fn create_region(&self, blocks: &[C::OpaqueBlock<'rewrite>]) -> C::OpaqueRegion<'rewrite>;
 
     fn set_attribute(
         &self,
@@ -112,7 +138,7 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
 // IR Structure
 //============================================================================//
 
-pub trait Operation<'p, C: Context + ?Sized = ConcreteContext>: Clone {
+pub trait Operation<'p, C: Context + ?Sized> {
     fn get_id(&self) -> OperationID;
 
     fn get_parent_op(&self) -> Option<C::Operation<'p>>;
@@ -121,19 +147,29 @@ pub trait Operation<'p, C: Context + ?Sized = ConcreteContext>: Clone {
 
     fn get_prev(&self) -> Option<C::Operation<'p>>;
     fn get_next(&self) -> Option<C::Operation<'p>>;
+
+    fn opaque<'rewrite>(&self, accessor: &C::Accessor<'rewrite>) -> C::OpaqueOperation<'rewrite>;
 }
 
-pub trait Block<'p, C: Context + ?Sized = ConcreteContext> {}
+pub trait Block<'p, C: Context + ?Sized> {}
 
-pub trait Attribute<'p, C: Context + ?Sized = ConcreteContext> {
+pub trait Attribute<'p, C: Context + ?Sized> {
     fn get_id(&self) -> AttributeID;
 }
 
-pub trait Region<'p, C: Context + ?Sized = ConcreteContext> {}
+pub trait Region<'p, C: Context + ?Sized> {}
 
-pub trait Value<'p, C: Context + ?Sized = ConcreteContext> {}
+pub trait Value<'p, C: Context + ?Sized> {}
 
-pub enum ValueOwner<'p, C: Context = ConcreteContext> {
+pub enum ValueOwner<'p, C: Context> {
     BlockArgument(C::Block<'p>),
     Operation(C::Operation<'p>),
+}
+
+//============================================================================//
+// Opaque IR Structure
+//============================================================================//
+
+pub trait OpaqueOperation<'rewrite, C: Context + ?Sized> {
+    fn access<'a>(&self, accessor: &'a C::Accessor<'rewrite>) -> C::Operation<'a>;
 }

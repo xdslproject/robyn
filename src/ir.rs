@@ -66,12 +66,12 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
     fn insert_op_before(
         &self,
         op: C::OpaqueOperation<'rewrite>,
-        before: C::OpaqueOperation<'rewrite>,
+        other: C::OpaqueOperation<'rewrite>,
     );
     fn insert_op_after(
         &self,
         op: C::OpaqueOperation<'rewrite>,
-        after: C::OpaqueOperation<'rewrite>,
+        other: C::OpaqueOperation<'rewrite>,
     );
     fn insert_op_at_start(
         &self,

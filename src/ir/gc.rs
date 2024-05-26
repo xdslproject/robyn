@@ -15,6 +15,8 @@ use crate::{
 
 use super::{AttributeID, OperandPosition, Rewriter};
 
+// TODO: proper error handling instead of assert
+
 pub struct GcContext {}
 
 impl Context for GcContext {
@@ -106,6 +108,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
     fn replace_op(&self, op: GcOperationRef, with: GcOperationRef) {
         assert!(op.valid());
         assert!(with.valid());
+        assert!(op.get().parent.is_some());
         if let Some(previous) = &op.get().previous {
             link_ops(previous, &with);
         }
@@ -127,12 +130,48 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         op.invalidate();
     }
 
-    fn insert_op_before(&self, op: GcOperationRef, before: GcOperationRef) {
-        todo!()
+    fn insert_op_before(&self, op: GcOperationRef, other: GcOperationRef) {
+        assert!(op.valid());
+        assert!(other.valid());
+        assert!(op.get().parent.is_none());
+        assert!(other.get().parent.is_some());
+        if let Some(previous) = &other.get().previous {
+            link_ops(previous, &op);
+        }
+        link_ops(&op, &other);
+        op.get_mut().parent = other.get().parent.clone();
     }
 
-    fn insert_op_after(&self, op: GcOperationRef, after: GcOperationRef) {
-        todo!()
+    fn insert_op_after(&self, op: GcOperationRef, other: GcOperationRef) {
+        assert!(op.valid());
+        assert!(other.valid());
+        assert!(op.get().parent.is_none());
+        assert!(other.get().parent.is_some());
+        if let Some(next) = &other.get().next {
+            link_ops(&op, next);
+        }
+        link_ops(&other, &op);
+        op.get_mut().parent = other.get().parent.clone();
+    }
+
+    fn insert_op_at_start(&self, op: GcOperationRef, at_start_of: GcBlockRef) {
+        assert!(op.valid());
+        assert!(at_start_of.valid());
+        if let Some(first) = &at_start_of.get().first {
+            link_ops(&op, &first);
+        }
+        op.get_mut().parent = Some(at_start_of.clone());
+        at_start_of.get_mut().first = Some(op);
+    }
+
+    fn insert_op_at_end(&self, op: GcOperationRef, at_end_of: GcBlockRef) {
+        assert!(op.valid());
+        assert!(at_end_of.valid());
+        if let Some(last) = &at_end_of.get().last {
+            link_ops(&last, &op);
+        }
+        op.get_mut().parent = Some(at_end_of.clone());
+        at_end_of.get_mut().last = Some(op);
     }
 
     fn create_op(
@@ -144,6 +183,10 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         successors: &[GcBlockRef],
         regions: &[GcRegionRef],
     ) -> GcOperationRef {
+        assert!(operands.iter().all(|x| x.valid()));
+        assert!(successors.iter().all(|x| x.valid()));
+        assert!(regions.iter().all(|x| x.valid()));
+
         let op = GcOperationRef(Gc::new(RefCell::new(GcOperation {
             id: operation,
             valid: true,
@@ -194,28 +237,26 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         arguments: &[GcAttributeRef],
         operations: &[GcOperationRef],
     ) -> GcBlockRef {
-        let (first, last) = if operations.len() == 0 {
-            (None, None)
-        } else {
-            operations[0].get_mut().previous = None;
-            operations[operations.len() - 1].get_mut().next = None;
+        assert!(operations.iter().all(|x| x.valid()));
 
-            operations[1..(operations.len() - 1)]
-                .iter()
-                .tuple_windows()
-                .for_each(|(x, y)| link_ops(x, y));
+        if let Some(first) = operations.first() {
+            first.get_mut().previous = None;
+        }
 
-            (
-                Some(operations[0].clone()),
-                Some(operations[operations.len() - 1].clone()),
-            )
-        };
+        if let Some(last) = operations.last() {
+            last.get_mut().next = None;
+        }
+
+        operations
+            .iter()
+            .tuple_windows()
+            .for_each(|(x, y)| link_ops(x, y));
 
         let block = GcBlockRef(Gc::new(RefCell::new(GcBlock {
             valid: true,
             parent: None,
-            first: first,
-            last: last,
+            first: operations.first().cloned(),
+            last: operations.last().cloned(),
             arguments: arguments
                 .iter()
                 .map(|x| {
@@ -239,6 +280,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
     }
 
     fn create_region<'a>(&'a self, blocks: &[GcBlockRef]) -> GcRegionRef {
+        assert!(blocks.iter().all(|b| b.valid()));
         GcRegionRef(Gc::new(RefCell::new(GcRegion {
             valid: true,
             parent: None,

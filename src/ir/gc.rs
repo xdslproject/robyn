@@ -13,7 +13,7 @@ use crate::{
     utils::ApInt,
 };
 
-use super::{AttributeID, OperandPosition, Rewriter};
+use super::{AttributeID, OperandPosition, Rewriter, ValueOwner};
 
 // TODO: proper error handling instead of assert
 
@@ -81,8 +81,8 @@ impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
         GcAttributeRef::new(GcAttribute::StringAttr(data.to_string()))
     }
 
-    fn rewrite(self) -> <GcContext as Context>::Rewriter<'rewrite> {
-        todo!()
+    fn rewrite(self) -> GcRewriter {
+        GcRewriter
     }
 
     fn apply_pattern<P: crate::ir::RewritePattern<GcContext>>(
@@ -90,7 +90,7 @@ impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
         pattern: &P,
         operation: GcOperationRef,
     ) {
-        todo!()
+        pattern.match_and_rewrite(Self { root: operation })
     }
 
     fn apply_pattern_dyn(
@@ -98,7 +98,7 @@ impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
         pattern: &dyn crate::ir::RewritePattern<GcContext>,
         operation: GcOperationRef,
     ) {
-        todo!()
+        pattern.match_and_rewrite(Self { root: operation })
     }
 }
 
@@ -187,7 +187,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         assert!(successors.iter().all(|x| x.valid()));
         assert!(regions.iter().all(|x| x.valid()));
 
-        let op = GcOperationRef(Gc::new(RefCell::new(GcOperation {
+        let op = GcOperationRef::new(GcOperation {
             id: operation,
             valid: true,
             previous: None,
@@ -211,7 +211,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
                 .collect(),
             successors: successors.into(),
             regions: regions.into(),
-        })));
+        });
 
         op.get_mut()
             .results
@@ -226,10 +226,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         attribute: crate::ir::AttributeID,
         parameters: &[GcAttributeRef],
     ) -> GcAttributeRef {
-        GcAttributeRef(Gc::new(RefCell::new(GcAttribute::Parameterized(
-            attribute,
-            parameters.into(),
-        ))))
+        GcAttributeRef::new(GcAttribute::Parameterized(attribute, parameters.into()))
     }
 
     fn create_block<'a>(
@@ -252,7 +249,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
             .tuple_windows()
             .for_each(|(x, y)| link_ops(x, y));
 
-        let block = GcBlockRef(Gc::new(RefCell::new(GcBlock {
+        let block = GcBlockRef::new(GcBlock {
             valid: true,
             parent: None,
             first: operations.first().cloned(),
@@ -268,7 +265,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
                     })
                 })
                 .collect(),
-        })));
+        });
 
         block
             .get_mut()
@@ -281,47 +278,50 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
 
     fn create_region<'a>(&'a self, blocks: &[GcBlockRef]) -> GcRegionRef {
         assert!(blocks.iter().all(|b| b.valid()));
-        GcRegionRef(Gc::new(RefCell::new(GcRegion {
+        GcRegionRef::new(GcRegion {
             valid: true,
             parent: None,
             blocks: blocks.into(),
-        })))
+        })
     }
 
-    fn set_attribute(
-        &self,
-        op: GcOperationRef,
-        attr_name: &str,
-        attr: <GcContext as Context>::OpaqueAttr<'rewrite>,
-    ) {
-        todo!()
+    fn set_attribute(&self, op: GcOperationRef, attr_name: &str, attr: GcAttributeRef) {
+        let attributes = &mut op.get_mut().attributes;
+        if let Some(value) = attributes.get_mut(attr_name) {
+            *value = attr;
+        } else {
+            attributes.insert(attr_name.into(), attr);
+        }
     }
 
     fn set_operand(
         &self,
         op: GcOperationRef,
         operand_pos: super::OperandPosition,
-        operand: <GcContext as Context>::OpaqueValue<'rewrite>,
+        operand: GcValueRef,
     ) {
-        todo!()
+        assert!(op.get().operands.len() > operand_pos as usize);
+        op.get_mut().operands[operand_pos as usize] = operand;
     }
 
     fn set_successor(
         &self,
         op: GcOperationRef,
         successor_pos: super::SuccessorPosition,
-        successor: <GcContext as Context>::OpaqueBlock<'rewrite>,
+        successor: GcBlockRef,
     ) {
-        todo!()
+        assert!(op.get().successors.len() > successor_pos as usize);
+        op.get_mut().successors[successor_pos as usize] = successor;
     }
 
     fn set_region(
         &self,
         op: GcOperationRef,
         region_pos: super::RegionPosition,
-        region: <GcContext as Context>::OpaqueRegion<'rewrite>,
+        region: GcRegionRef,
     ) {
-        todo!()
+        assert!(op.get().regions.len() > region_pos as usize);
+        op.get_mut().regions[region_pos as usize] = region;
     }
 }
 
@@ -382,43 +382,55 @@ impl GcOperationRef {
 
 impl<'a> Operation<'a, GcContext> for GcOperationRef {
     fn get_parent_op(&self) -> Option<GcOperationRef> {
-        todo!()
+        self.get()
+            .parent
+            .as_ref()?
+            .get()
+            .parent
+            .as_ref()?
+            .get()
+            .parent
+            .clone()
     }
 
     fn get_parent_block(&self) -> Option<GcBlockRef> {
-        todo!()
+        self.get().parent.clone()
+    }
+
+    fn get_parent_region(&self) -> Option<GcRegionRef> {
+        self.get().parent.as_ref()?.get().parent.clone()
     }
 
     fn get_id(&self) -> OperationID {
-        todo!()
+        self.get().id
     }
 
-    fn get_parent_region(&self) -> Option<<GcContext as Context>::Region<'a>> {
-        todo!()
+    fn get_prev(&self) -> Option<GcOperationRef> {
+        self.get().previous.clone()
     }
 
-    fn get_prev(&self) -> Option<<GcContext as Context>::Operation<'a>> {
-        todo!()
+    fn get_next(&self) -> Option<GcOperationRef> {
+        self.get().next.clone()
     }
 
     fn opaque<'rewrite>(
         &self,
-        accessor: &<GcContext as Context>::Accessor<'rewrite>,
-    ) -> GcOperationRef {
-        todo!()
-    }
-
-    fn get_next(&self) -> Option<<GcContext as Context>::Operation<'a>> {
-        todo!()
+        _: &<GcContext as Context>::Accessor<'rewrite>,
+    ) -> <GcContext as Context>::OpaqueOperation<'rewrite> {
+        self.clone()
     }
 }
 
 impl<'rewrite> OpaqueOperation<'rewrite, GcContext> for GcOperationRef {
     fn access<'a>(
         &self,
-        accessor: &'a <GcContext as Context>::Accessor<'rewrite>,
+        _: &'a <GcContext as Context>::Accessor<'rewrite>,
     ) -> <GcContext as Context>::Operation<'a> {
-        todo!()
+        self.clone()
+    }
+
+    fn copy(&self) -> Self {
+        self.clone()
     }
 }
 
@@ -575,6 +587,26 @@ pub enum GcValueOwner {
     Placeholder,
     BlockArgument(GcBlockRef),
     Operation(GcOperationRef),
+}
+
+impl<'a> From<ValueOwner<'a, GcContext>> for GcValueOwner {
+    fn from(value: ValueOwner<'a, GcContext>) -> Self {
+        match value {
+            ValueOwner::Placeholder => Self::Placeholder,
+            ValueOwner::BlockArgument(x) => Self::BlockArgument(x),
+            ValueOwner::Operation(x) => Self::Operation(x),
+        }
+    }
+}
+
+impl<'a> From<GcValueOwner> for ValueOwner<'a, GcContext> {
+    fn from(value: GcValueOwner) -> Self {
+        match value {
+            GcValueOwner::Placeholder => Self::Placeholder,
+            GcValueOwner::BlockArgument(x) => Self::BlockArgument(x),
+            GcValueOwner::Operation(x) => Self::Operation(x),
+        }
+    }
 }
 
 impl GcValue {

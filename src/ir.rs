@@ -61,29 +61,45 @@ pub trait Accessor<'rewrite, C: Context + ?Sized> {
 }
 
 pub trait Rewriter<'rewrite, C: Context + ?Sized> {
+    /// Replaces an operation with the provided operation. 
+    /// After this, the replaced operation can no longer be used.
     fn replace_op(&self, op: C::OpaqueOperation<'rewrite>, with: C::OpaqueOperation<'rewrite>);
+
+    /// Erases an operation. 
+    /// After this, the erased operation can no longer be used.
     fn erase_op(&self, op: C::OpaqueOperation<'rewrite>);
+
+    /// Inserts an operation in the same block of an other operation,
+    /// before it. The other operation must already be inserted in a block.
     fn insert_op_before(
         &self,
         op: C::OpaqueOperation<'rewrite>,
         other: C::OpaqueOperation<'rewrite>,
     );
+
+    /// Inserts an operation in the same block of an other operation,
+    /// after it. The other operation must already be inserted in a block.
     fn insert_op_after(
         &self,
         op: C::OpaqueOperation<'rewrite>,
         other: C::OpaqueOperation<'rewrite>,
     );
+
+    /// Inserts an operation at the start of a block.
     fn insert_op_at_start(
         &self,
         op: C::OpaqueOperation<'rewrite>,
         at_start_of: C::OpaqueBlock<'rewrite>,
     );
+
+    /// Inserts an operation at the end of a block.
     fn insert_op_at_end(
         &self,
         op: C::OpaqueOperation<'rewrite>,
         at_end_of: C::OpaqueBlock<'rewrite>,
     );
 
+    /// Creates a free standing operation.
     fn create_op(
         &self,
         operation: OperationID,
@@ -94,6 +110,7 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
         regions: &[C::OpaqueRegion<'rewrite>],
     ) -> C::OpaqueOperation<'rewrite>;
 
+    /// Creates a parametrized attribute.
     fn create_attribute(
         &self,
         attribute: AttributeID,
@@ -108,24 +125,31 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
 
     fn create_region(&self, blocks: &[C::OpaqueBlock<'rewrite>]) -> C::OpaqueRegion<'rewrite>;
 
+    /// Inserts or replace an attribute in the operation's dictionnary.
     fn set_attribute(
         &self,
         op: C::OpaqueOperation<'rewrite>,
         attr_name: &str,
         attr: C::OpaqueAttr<'rewrite>,
     );
+    
+    /// Sets an existing operand of an operation to be a specific value.
     fn set_operand(
         &self,
         op: C::OpaqueOperation<'rewrite>,
         operand_pos: OperandPosition,
         operand: C::OpaqueValue<'rewrite>,
     );
+
+    /// Sets an existing successor of an operation to be a specific block.
     fn set_successor(
         &self,
         op: C::OpaqueOperation<'rewrite>,
         successor_pos: SuccessorPosition,
         successor: C::OpaqueBlock<'rewrite>,
     );
+
+    /// Sets an existing region of an operation to be a specific region.
     fn set_region(
         &self,
         op: C::OpaqueOperation<'rewrite>,
@@ -162,6 +186,7 @@ pub trait Region<'p, C: Context + ?Sized> {}
 pub trait Value<'p, C: Context + ?Sized> {}
 
 pub enum ValueOwner<'p, C: Context> {
+    Placeholder,
     BlockArgument(C::Block<'p>),
     Operation(C::Operation<'p>),
 }
@@ -172,4 +197,10 @@ pub enum ValueOwner<'p, C: Context> {
 
 pub trait OpaqueOperation<'rewrite, C: Context + ?Sized> {
     fn access<'a>(&self, accessor: &'a C::Accessor<'rewrite>) -> C::Operation<'a>;
+    fn copy(&self) -> Self;
+}
+
+pub trait OpaqueAttr<'rewrite, C: Context + ?Sized> {
+    fn access<'a>(&self, accessor: &'a C::Accessor<'rewrite>) -> C::Attribute<'a>;
+    fn copy(&self) -> Self;
 }

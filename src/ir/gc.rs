@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     cell::RefCell,
     collections::{HashMap, HashSet},
 };
@@ -9,20 +10,32 @@ use itertools::Itertools;
 use crate::{
     dialect::{AttributeKind, Dialect, OperationKind},
     ir::{
-        Accessor, Attribute, Block, Context, OpaqueOperation, Operation, OperationID, Region, Value,
+        Accessor, Attribute, Block, Context, OpaqueAttr, OpaqueOperation, OperandPosition,
+        Operation, Region, RewritePattern, Rewriter, Value, ValueOwner,
     },
     utils::ApInt,
 };
 
-use super::{AttributeID, OpaqueAttr, OperandPosition, Rewriter, ValueOwner};
-
 // TODO: proper error handling instead of assert
 
 #[derive(Collectable)]
-pub struct GcContext {}
+pub struct GcContext {
+    op_kinds: HashMap<TypeId, Gc<GcOpKindVtable>>,
+    attr_kinds: HashMap<TypeId, Gc<GcAttrKindVtable>>,
+}
 
 #[derive(Collectable, Clone)]
-pub struct GcContextRef(Gc<RefCell<GcContextRef>>);
+pub struct GcContextRef(Gc<RefCell<GcContext>>);
+
+impl GcContextRef {
+    fn get(&self) -> std::cell::Ref<'_, GcContext> {
+        self.0.borrow()
+    }
+
+    fn get_mut(&self) -> std::cell::RefMut<'_, GcContext> {
+        self.0.borrow_mut()
+    }
+}
 
 impl Context for GcContextRef {
     type Operation<'a> = GcOperationRef;
@@ -34,14 +47,41 @@ impl Context for GcContextRef {
     type Accessor<'rewrite> = GcAccessor;
     type Rewriter<'rewrite> = GcRewriter;
 
+    type Program<'ctx> = GcProgram; // TODO
+
     type OpaqueOperation<'rewrite> = GcOperationRef;
     type OpaqueAttr<'rewrite> = GcAttributeRef;
     type OpaqueBlock<'rewrite> = GcBlockRef;
     type OpaqueRegion<'rewrite> = GcRegionRef;
     type OpaqueValue<'rewrite> = GcValueRef;
-    
-    fn register_dialect<D: Dialect>(&mut self) {
-        todo!()
+
+    fn register_operation<O: OperationKind<Self>>(&mut self) {
+        self.get_mut().op_kinds.insert(
+            TypeId::of::<O>(),
+            Gc::new(GcOpKindVtable {
+                operation: TypeId::of::<O>(),
+            }),
+        );
+    }
+
+    fn register_attribute<A: AttributeKind<Self>>(&mut self) {
+        self.get_mut().attr_kinds.insert(
+            TypeId::of::<A>(),
+            Gc::new(GcAttrKindVtable {
+                attr: TypeId::of::<A>(),
+            }),
+        );
+    }
+
+    fn apply_pattern<'ctx, P: RewritePattern<Self>>(
+        &'ctx self,
+        program: &mut Self::Program<'ctx>,
+        pattern: &P,
+    ) {
+        pattern.match_and_rewrite(GcAccessor {
+            ctx: self.clone(),
+            root: program.op.clone(),
+        })
     }
 }
 
@@ -58,6 +98,14 @@ fn link_ops(op1: &GcOperationRef, op2: &GcOperationRef) {
     }
     op1.get_mut().next = Some(op2.clone());
     op2.get_mut().previous = Some(op1.clone());
+}
+
+//============================================================================//
+// Program
+//============================================================================//
+
+pub struct GcProgram {
+    op: GcOperationRef,
 }
 
 //============================================================================//
@@ -78,7 +126,7 @@ impl<'rewrite> Accessor<'rewrite, GcContextRef> for GcAccessor {
         GcRewriter { ctx: self.ctx }
     }
 
-    fn apply_pattern<P: crate::ir::RewritePattern<GcContextRef>>(
+    fn apply_pattern<P: RewritePattern<GcContextRef>>(
         &mut self,
         pattern: &P,
         operation: GcOperationRef,
@@ -91,7 +139,7 @@ impl<'rewrite> Accessor<'rewrite, GcContextRef> for GcAccessor {
 
     fn apply_pattern_dyn(
         &mut self,
-        pattern: &dyn crate::ir::RewritePattern<GcContextRef>,
+        pattern: &dyn RewritePattern<GcContextRef>,
         operation: GcOperationRef,
     ) {
         pattern.match_and_rewrite(Self {
@@ -198,9 +246,8 @@ impl<'rewrite> Rewriter<'rewrite, GcContextRef> for GcRewriter {
         at_end_of.get_mut().last = Some(op);
     }
 
-    fn create_op(
+    fn create_op<O: OperationKind>(
         &self,
-        operation: OperationID,
         operands: &[GcValueRef],
         result_types: &[GcAttributeRef],
         attributes: &[(impl ToString, GcAttributeRef)],
@@ -210,10 +257,16 @@ impl<'rewrite> Rewriter<'rewrite, GcContextRef> for GcRewriter {
         assert!(operands.iter().all(|x| x.valid()));
         assert!(successors.iter().all(|x| x.valid()));
         assert!(regions.iter().all(|x| x.valid()));
+        assert!(self.ctx.get().op_kinds.contains_key(&TypeId::of::<O>()));
 
         let op = GcOperationRef::new(GcOperation {
-            id: operation,
-            ctx: self.ctx.clone(),
+            kind: self
+                .ctx
+                .get()
+                .op_kinds
+                .get(&TypeId::of::<O>())
+                .expect("already checked")
+                .clone(),
             valid: true,
             previous: None,
             next: None,
@@ -246,19 +299,25 @@ impl<'rewrite> Rewriter<'rewrite, GcContextRef> for GcRewriter {
         op
     }
 
-    fn create_attribute<'a>(
-        &'a self,
-        attribute: crate::ir::AttributeID,
+    fn create_parameterized_attribute<A: AttributeKind>(
+        &self,
         parameters: &[GcAttributeRef],
     ) -> GcAttributeRef {
+        assert!(self.ctx.get().attr_kinds.contains_key(&TypeId::of::<A>()));
         GcAttributeRef::new(GcAttribute {
-            ctx: self.ctx.clone(),
-            data: GcAttributeData::Parameterized(attribute, parameters.into()),
+            kind: self
+                .ctx
+                .get()
+                .attr_kinds
+                .get(&TypeId::of::<A>())
+                .expect("already checked")
+                .clone(),
+            data: GcAttributeData::Parameterized(parameters.into()),
         })
     }
 
-    fn create_block<'a>(
-        &'a self,
+    fn create_block(
+        &self,
         arguments: &[GcAttributeRef],
         operations: &[GcOperationRef],
     ) -> GcBlockRef {
@@ -304,7 +363,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContextRef> for GcRewriter {
         block
     }
 
-    fn create_region<'a>(&'a self, blocks: &[GcBlockRef]) -> GcRegionRef {
+    fn create_region(&self, blocks: &[GcBlockRef]) -> GcRegionRef {
         assert!(blocks.iter().all(|b| b.valid()));
         GcRegionRef::new(GcRegion {
             valid: true,
@@ -359,8 +418,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContextRef> for GcRewriter {
 
 #[derive(Collectable)]
 pub struct GcOperation {
-    ctx: GcContextRef,
-    id: OperationID,
+    kind: Gc<GcOpKindVtable>,
 
     valid: bool,
 
@@ -410,12 +468,12 @@ impl GcOperationRef {
 }
 
 impl<'a> Operation<'a, GcContextRef> for GcOperationRef {
-    fn get_id(&self) -> OperationID {
-        self.get().id
+    fn isa<K: OperationKind>(&self) -> bool {
+        self.get().kind.operation == TypeId::of::<K>()
     }
 
-    fn dyn_cast<K: OperationKind<GcContextRef>>(&self) -> Option<K::Access<'a>> {
-        K::access(&self.get().ctx, self.clone())
+    fn dyn_cast<K: OperationKind>(&self) -> Option<K::Access<'a, GcContextRef>> {
+        K::access(self.clone())
     }
 
     fn get_parent_op(&self) -> Option<GcOperationRef> {
@@ -469,7 +527,7 @@ impl<'rewrite> OpaqueOperation<'rewrite, GcContextRef> for GcOperationRef {
 
 #[derive(Collectable)]
 pub struct GcAttribute {
-    ctx: GcContextRef,
+    kind: Gc<GcAttrKindVtable>,
     data: GcAttributeData,
 }
 
@@ -479,7 +537,7 @@ pub enum GcAttributeData {
     StringAttr(String),
     ArrayAttr(Vec<GcAttributeRef>),
     DictionaryAttr(HashMap<String, GcAttributeRef>),
-    Parameterized(AttributeID, Vec<GcAttributeRef>),
+    Parameterized(Vec<GcAttributeRef>),
 }
 
 #[derive(Collectable, Clone)]
@@ -500,8 +558,12 @@ impl GcAttributeRef {
 }
 
 impl<'a> Attribute<'a, GcContextRef> for GcAttributeRef {
-    fn dyn_cast<K: AttributeKind<GcContextRef>>(&self) -> Option<K::Access<'a>> {
-        K::access(&self.get().ctx, self.clone())
+    fn isa<K: AttributeKind>(&self) -> bool {
+        self.get().kind.attr == TypeId::of::<K>()
+    }
+
+    fn dyn_cast<K: AttributeKind>(&self) -> Option<K::Access<'a, GcContextRef>> {
+        K::access(self.clone())
     }
 }
 
@@ -693,3 +755,19 @@ impl GcValueRef {
 }
 
 impl<'a> Value<'a, GcContextRef> for GcValueRef {}
+
+//============================================================================//
+// Vtables
+//============================================================================//
+
+#[derive(Collectable)]
+pub struct GcOpKindVtable {
+    // Type ID of the associated OperationKind.
+    operation: TypeId,
+}
+
+#[derive(Collectable)]
+pub struct GcAttrKindVtable {
+    // Type ID of the associated AttributeKind.
+    attr: TypeId,
+}

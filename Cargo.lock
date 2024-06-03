@@ -22,9 +22,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "dumpster"
-version = "0.1.2"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77dd869e851c5425fd8e8c3829058bc1772be69308f985100677f79cc697e0a4"
+checksum = "3a43c9902d77297c3e925f52263c9c11b9acbbe4dbfa6efbc7de8c2e12e2fe67"
 dependencies = [
  "dumpster_derive",
  "once_cell",
@@ -33,9 +33,9 @@ dependencies = [
 
 [[package]]
 name = "dumpster_derive"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c75758e8d27b1891033c102faa52d082afd3ebdc4a5dad4f75bc53a3940abd16"
+checksum = "59e022b603f251ade20a007e657d0c24a1a9358eb9e8db9dc739c29b75005f8d"
 dependencies = [
  "proc-macro2",
  "quote",

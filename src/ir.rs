@@ -3,10 +3,10 @@ mod gc;
 #[cfg(feature = "gc")]
 pub use gc::GcContext;
 
-use crate::{dialect::{AttributeKind, Dialect, OperationKind}, utils::ApInt};
-
-pub type OperationID = u32;
-pub type AttributeID = u32;
+use crate::{
+    dialect::{AttributeKind, OperationKind},
+    utils::ApInt,
+};
 
 pub type OperandPosition = u32;
 pub type SuccessorPosition = u32;
@@ -20,6 +20,10 @@ pub trait Context {
     type Region<'a>: Region<'a, Self>;
     type Value<'a>: Value<'a, Self>;
 
+    type Program<'ctx>
+    where
+        Self: 'ctx;
+
     // Rewriting
     type Accessor<'rewrite>: Accessor<'rewrite, Self>;
     type Rewriter<'rewrite>: Rewriter<'rewrite, Self>;
@@ -30,7 +34,15 @@ pub trait Context {
     type OpaqueRegion<'rewrite>;
     type OpaqueValue<'rewrite>;
 
-    fn register_dialect<D: Dialect>(&mut self);
+    fn register_operation<O: OperationKind>(&mut self);
+    fn register_attribute<A: AttributeKind>(&mut self);
+
+    /// Applies the provided pattern to the top level operation of the provided program.
+    fn apply_pattern<'ctx, P: RewritePattern<Self>>(
+        &'ctx self,
+        program: &mut Self::Program<'ctx>,
+        pattern: &P,
+    );
 }
 
 //============================================================================//
@@ -63,11 +75,11 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
     fn get_int_data_attr(&self, data: ApInt) -> C::Attribute<'_>;
     fn get_string_attr(&self, data: impl ToString) -> C::Attribute<'_>;
 
-    /// Replaces an operation with the provided operation. 
+    /// Replaces an operation with the provided operation.
     /// After this, the replaced operation can no longer be used.
     fn replace_op(&self, op: C::OpaqueOperation<'rewrite>, with: C::OpaqueOperation<'rewrite>);
 
-    /// Erases an operation. 
+    /// Erases an operation.
     /// After this, the erased operation can no longer be used.
     fn erase_op(&self, op: C::OpaqueOperation<'rewrite>);
 
@@ -102,9 +114,8 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
     );
 
     /// Creates a free standing operation.
-    fn create_op(
+    fn create_op<O: OperationKind>(
         &self,
-        operation: OperationID,
         operands: &[C::OpaqueValue<'rewrite>],
         result_types: &[C::OpaqueAttr<'rewrite>],
         attributes: &[(impl ToString, C::OpaqueAttr<'rewrite>)],
@@ -113,9 +124,8 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
     ) -> C::OpaqueOperation<'rewrite>;
 
     /// Creates a parametrized attribute.
-    fn create_attribute(
+    fn create_parameterized_attribute<A: AttributeKind>(
         &self,
-        attribute: AttributeID,
         parameters: &[C::OpaqueAttr<'rewrite>],
     ) -> C::OpaqueAttr<'rewrite>;
 
@@ -134,7 +144,7 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
         attr_name: &str,
         attr: C::OpaqueAttr<'rewrite>,
     );
-    
+
     /// Sets an existing operand of an operation to be a specific value.
     fn set_operand(
         &self,
@@ -165,8 +175,8 @@ pub trait Rewriter<'rewrite, C: Context + ?Sized> {
 //============================================================================//
 
 pub trait Operation<'a, C: Context + ?Sized> {
-    fn get_id(&self) -> OperationID;
-    fn dyn_cast<K: OperationKind<C>>(&self) -> Option<K::Access<'a>>;
+    fn isa<K: OperationKind>(&self) -> bool;
+    fn dyn_cast<K: OperationKind>(&self) -> Option<K::Access<'a, C>>;
 
     fn get_parent_op(&self) -> Option<C::Operation<'a>>;
     fn get_parent_region(&self) -> Option<C::Region<'a>>;
@@ -181,7 +191,8 @@ pub trait Operation<'a, C: Context + ?Sized> {
 pub trait Block<'a, C: Context + ?Sized> {}
 
 pub trait Attribute<'a, C: Context + ?Sized> {
-    fn dyn_cast<K: AttributeKind<C>>(&self) -> Option<K::Access<'a>>;
+    fn isa<K: AttributeKind>(&self) -> bool;
+    fn dyn_cast<K: AttributeKind>(&self) -> Option<K::Access<'a, C>>;
 }
 
 pub trait Region<'a, C: Context + ?Sized> {}

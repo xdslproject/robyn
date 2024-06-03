@@ -2,24 +2,29 @@ use std::marker::PhantomData;
 
 use crate::ir::Context;
 
-use super::OperationKind;
+use super::{Dialect, OperationKind};
 
-pub struct ModuleOp<C: Context>(PhantomData<C>);
+pub struct BuiltinDialect;
 
-pub struct ModuleOpAccess<'a> {
+impl Dialect for BuiltinDialect {
+    fn register(&self, ctx: &mut impl Context) {
+        todo!()
+    }
+}
+
+pub struct ModuleOp;
+
+pub struct ModuleOpAccess<'a, C: Context + ?Sized> {
 
 }
 
-impl<C: Context> OperationKind<C> for ModuleOp<C> {
-    type Access<'a>;
+impl OperationKind for ModuleOp {
+    type Dialect = BuiltinDialect;
 
-    type Opaque<'rewrite>;
+    type Access<'a, C> = ModuleOpAccess<'a, C> where C: Context + ?Sized;
+    type Opaque<'rewrite, C>;
 
-    fn access<'a>(op: impl crate::ir::Operation<'a, C>) -> Option<Self::Access<'a>> {
-        todo!()
-    }
-
-    fn opaque<'rewrite>(op: impl crate::ir::OpaqueOperation<'rewrite, C>) -> Option<Self::Opaque<'rewrite>> {
+    fn access<'a, C: Context + ?Sized>(op: impl crate::ir::Operation<'a, C>) -> Option<Self::Access<'a>> {
         todo!()
     }
 }

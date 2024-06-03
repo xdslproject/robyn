@@ -8,5 +8,5 @@ default = ["gc"]
 gc = ["dumpster", "itertools"]
 
 [dependencies]
-dumpster = { optional = true, version = "0.1.2", features = ["derive"] }
+dumpster = { optional = true, version = "0.2.1", features = ["derive"] }
 itertools = { optional = true, version = "0.13.0" }

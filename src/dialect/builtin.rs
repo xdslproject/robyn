@@ -1,30 +1,46 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, ops::Deref};
 
-use crate::ir::Context;
+use crate::ir::{Context, OpaqueOperation, Operation, Region, Rewriter};
 
-use super::{Dialect, OperationKind};
+use super::{declare_operation, operation_defaults, Dialect, OperationKind, OperationKindAccess};
 
 pub struct BuiltinDialect;
 
 impl Dialect for BuiltinDialect {
-    fn register(&self, ctx: &mut impl Context) {
-        todo!()
+    fn register(ctx: &mut impl Context) {
+        ctx.register_operation::<ModuleOp>();
     }
 }
 
-pub struct ModuleOp;
-
-pub struct ModuleOpAccess<'a, C: Context + ?Sized> {
-
-}
+declare_operation!(ModuleOp, ModuleOpAccess, ModuleOpOpaque);
 
 impl OperationKind for ModuleOp {
-    type Dialect = BuiltinDialect;
+    operation_defaults!(BuiltinDialect, ModuleOpAccess, ModuleOpOpaque);
 
-    type Access<'a, C> = ModuleOpAccess<'a, C> where C: Context + ?Sized;
-    type Opaque<'rewrite, C>;
+    fn access<'rewrite, 'a, C: Context + ?Sized>(
+        op: C::Operation<'rewrite, 'a>,
+    ) -> Option<Self::Access<'rewrite, 'a, C>> {
+        (op.isa::<ModuleOp>() && op.get_region(0).and_then(|r| r.get_block(0)).is_some())
+            .then(|| ModuleOpAccess(op))
+    }
+}
 
-    fn access<'a, C: Context + ?Sized>(op: impl crate::ir::Operation<'a, C>) -> Option<Self::Access<'a>> {
-        todo!()
+impl ModuleOp {
+    pub fn create<'rewrite, C: Context>(
+        rewriter: &C::Rewriter<'rewrite>,
+    ) -> C::OpaqueOperation<'rewrite> {
+        let module_block = rewriter.create_block(&[], &[]);
+        let module_region = rewriter.create_region(&[module_block]);
+        rewriter.create_op::<ModuleOp>(&[], &[], &[], &[], &[module_region])
+    }
+}
+
+impl<'rewrite, 'a, C: Context> ModuleOpAccess<'rewrite, 'a, C> {
+    pub fn get_body(&self) -> C::Block<'rewrite, 'a> {
+        self.0
+            .get_region(0)
+            .expect("verified")
+            .get_block(0)
+            .expect("verified")
     }
 }

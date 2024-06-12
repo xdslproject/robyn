@@ -1,27 +1,36 @@
-use std::{marker::PhantomData, ops::Deref};
+use bitvec::{field::BitField, vec::BitVec};
 
-use crate::ir::{Context, OpaqueOperation, Operation, Region, Rewriter};
+use crate::{
+    ir::{Attribute, AttributeData, Context, OpaqueAttributeData, Operation, Region, Rewriter},
+    utils::bitvec::BitVecUtils,
+};
 
-use super::{declare_operation, operation_defaults, Dialect, OperationKind, OperationKindAccess};
-
+use super::{
+    attr_defaults, declare_attr, declare_operation, operation_defaults, AttributeKind, Dialect,
+    OperationKind, OperationKindAccess,
+};
+use crate::dialect::AttributeKindAccess;
 pub struct BuiltinDialect;
 
 impl Dialect for BuiltinDialect {
     fn register(ctx: &mut impl Context) {
         ctx.register_operation::<ModuleOp>();
+
+        ctx.register_attribute::<StringAttr>();
     }
 }
+
+//============================================================================//
+// ModuleOp
+//============================================================================//
 
 declare_operation!(ModuleOp, ModuleOpAccess, ModuleOpOpaque);
 
 impl OperationKind for ModuleOp {
     operation_defaults!(BuiltinDialect, ModuleOpAccess, ModuleOpOpaque);
 
-    fn access<'rewrite, 'a, C: Context + ?Sized>(
-        op: C::Operation<'rewrite, 'a>,
-    ) -> Option<Self::Access<'rewrite, 'a, C>> {
-        (op.isa::<ModuleOp>() && op.get_region(0).and_then(|r| r.get_block(0)).is_some())
-            .then(|| ModuleOpAccess(op))
+    fn valid_access<'rewrite, 'a, C: Context>(op: C::Operation<'rewrite, 'a>) -> bool {
+        op.isa::<ModuleOp>() && op.get_region(0).and_then(|r| r.get_block(0)).is_some()
     }
 }
 
@@ -37,10 +46,46 @@ impl ModuleOp {
 
 impl<'rewrite, 'a, C: Context> ModuleOpAccess<'rewrite, 'a, C> {
     pub fn get_body(&self) -> C::Block<'rewrite, 'a> {
-        self.0
+        self.as_ref()
             .get_region(0)
             .expect("verified")
             .get_block(0)
             .expect("verified")
+    }
+}
+
+//============================================================================//
+// Standard MLIR attributes
+//============================================================================//
+
+declare_attr!(StringAttr, StringAttrAccess, StringAttrOpaque);
+
+impl AttributeKind for StringAttr {
+    attr_defaults!(BuiltinDialect, StringAttrAccess, StringAttrOpaque);
+
+    fn valid_access<'rewrite, 'a, C: Context>(attr: C::Attribute<'rewrite, 'a>) -> bool {
+        attr.isa::<StringAttr>()
+            && match attr.data() {
+                AttributeData::Bits(bits) => bits.len() % 8 == 0,
+                _ => false,
+            }
+    }
+}
+
+impl StringAttr {
+    pub fn create<'rewrite, C: Context>(
+        rewriter: &C::Rewriter<'rewrite>,
+        data: &[u8],
+    ) -> C::OpaqueAttr<'rewrite> {
+        rewriter.create_attribute::<StringAttr>(OpaqueAttributeData::Bits(BitVec::from_bytes(data)))
+    }
+}
+
+impl<'rewrite, 'a, C: Context> StringAttrAccess<'rewrite, 'a, C> {
+    pub fn as_bytes(&self) -> &[u8] {
+        let AttributeData::Bits(bits) = self.as_ref().data() else {
+            unreachable!()
+        };
+        
     }
 }

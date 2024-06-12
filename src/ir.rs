@@ -1,11 +1,16 @@
 #[cfg(feature = "gc")]
 mod gc;
+use std::{
+    collections::HashMap,
+    ops::{Deref, Index},
+};
+
+use bitvec::{slice::BitSlice, vec::BitVec};
 #[cfg(feature = "gc")]
 pub use gc::GcContext;
 
 use crate::{
     dialect::{AttributeKind, OperationKind},
-    utils::ApInt,
 };
 
 pub type OperandPosition = usize;
@@ -25,6 +30,10 @@ pub trait Context: Sized {
     type Program<'ctx>
     where
         Self: 'ctx;
+
+    type BitsData<'data>: Deref<Target = BitSlice>;
+    type ArrayData<'data, 'rewrite, 'a>: Deref<Target = [Self::Attribute<'a, 'rewrite>]>;
+    type DictionaryData<'data, 'rewrite, 'a>: DictionaryData<'data, 'rewrite, 'a, Self>;
 
     // Rewriting
     type Accessor<'rewrite>: Accessor<'rewrite, Self>;
@@ -47,6 +56,10 @@ pub trait Context: Sized {
         program: &mut Self::Program<'ctx>,
         pattern: &P,
     );
+}
+
+pub trait DictionaryData<'data, 'rewrite, 'a, C: Context> {
+    fn get(&self, data: &str) -> Option<C::Attribute<'rewrite, 'a>>;
 }
 
 //============================================================================//
@@ -76,7 +89,6 @@ pub trait Accessor<'rewrite, C: Context> {
 pub trait Rewriter<'rewrite, C: Context> {
     fn get_placeholder_value(&self, r#type: C::OpaqueAttr<'rewrite>) -> C::OpaqueValue<'rewrite>;
 
-    fn get_int_data_attr(&self, data: ApInt) -> C::OpaqueAttr<'rewrite>;
     fn get_string_attr(&self, data: impl ToString) -> C::OpaqueAttr<'rewrite>;
 
     /// Replaces an operation with the provided operation.
@@ -127,10 +139,10 @@ pub trait Rewriter<'rewrite, C: Context> {
         regions: &[C::OpaqueRegion<'rewrite>],
     ) -> C::OpaqueOperation<'rewrite>;
 
-    /// Creates a parametrized attribute.
-    fn create_parameterized_attribute<A: AttributeKind>(
+    /// Creates an attribute.
+    fn create_attribute<'data, A: AttributeKind>(
         &self,
-        parameters: &[C::OpaqueAttr<'rewrite>],
+        data: OpaqueAttributeData<'data, 'rewrite, C>,
     ) -> C::OpaqueAttr<'rewrite>;
 
     fn create_block(
@@ -178,7 +190,7 @@ pub trait Rewriter<'rewrite, C: Context> {
 // IR Structure
 //============================================================================//
 
-pub trait Operation<'rewrite, 'a, C: Context> {
+pub trait Operation<'rewrite, 'a, C: Context>: Clone {
     fn isa<K: OperationKind>(&self) -> bool;
     fn dyn_cast<K: OperationKind>(&self) -> Option<K::Access<'rewrite, 'a, C>>;
 
@@ -204,24 +216,40 @@ pub trait Operation<'rewrite, 'a, C: Context> {
     fn opaque(&self) -> C::OpaqueOperation<'rewrite>;
 }
 
-pub trait Block<'rewrite, 'a, C: Context> {
+pub trait Block<'rewrite, 'a, C: Context>: Clone {
     fn ops(&self) -> impl Iterator<Item = C::Operation<'rewrite, 'a>>;
 
     fn opaque(&self) -> C::OpaqueBlock<'rewrite>;
 }
 
-pub trait Attribute<'rewrite, 'a, C: Context> {
-    fn isa<K: AttributeKind>(&self) -> bool;
-    fn dyn_cast<K: AttributeKind>(&self) -> Option<K::Access<'rewrite, 'a, C>>;
+pub enum AttributeData<'data, 'rewrite, 'a, C: Context> {
+    Bits(C::BitsData<'data>),
+    Array(C::ArrayData<'data, 'rewrite, 'a>),
+    Dictionary(C::DictionaryData<'data, 'rewrite, 'a>),
 }
 
-pub trait Region<'rewrite, 'a, C: Context> {
+pub enum OpaqueAttributeData<'data, 'rewrite, C: Context> {
+    Bits(BitVec),
+    Array(&'data [C::OpaqueAttr<'rewrite>]),
+    Dictionary(&'data [(&'data str, C::OpaqueAttr<'rewrite>)]),
+}
+
+pub trait Attribute<'rewrite, 'a, C: Context>: Clone {
+    fn isa<K: AttributeKind>(&self) -> bool;
+    fn dyn_cast<K: AttributeKind>(&self) -> Option<K::Access<'rewrite, 'a, C>>;
+
+    fn data<'data>(&'data self) -> AttributeData<'data, 'rewrite, 'a, C>;
+
+    fn opaque(&self) -> C::OpaqueAttr<'rewrite>;
+}
+
+pub trait Region<'rewrite, 'a, C: Context>: Clone {
     fn get_block(&self, block: BlockPosition) -> Option<C::Block<'rewrite, 'a>>;
 
     fn opaque(&self) -> C::OpaqueRegion<'rewrite>;
 }
 
-pub trait Value<'rewrite, 'a, C: Context> {
+pub trait Value<'rewrite, 'a, C: Context>: Clone {
     fn opaque(&self) -> C::OpaqueValue<'rewrite>;
 }
 
@@ -235,12 +263,10 @@ pub enum ValueOwner<'rewrite, 'a, C: Context> {
 // Opaque IR Structure
 //============================================================================//
 
-pub trait OpaqueOperation<'rewrite, C: Context> {
+pub trait OpaqueOperation<'rewrite, C: Context>: Clone {
     fn access<'a>(&self, accessor: &'a C::Accessor<'rewrite>) -> C::Operation<'rewrite, 'a>;
-    fn copy(&self) -> Self;
 }
 
-pub trait OpaqueAttr<'rewrite, C: Context> {
+pub trait OpaqueAttr<'rewrite, C: Context>: Clone {
     fn access<'a>(&self, accessor: &'a C::Accessor<'rewrite>) -> C::Attribute<'rewrite, 'a>;
-    fn copy(&self) -> Self;
 }

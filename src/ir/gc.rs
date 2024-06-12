@@ -1,11 +1,12 @@
 use std::{
     any::TypeId,
-    cell::RefCell,
+    cell::{Ref, RefCell},
     collections::{HashMap, HashSet},
+    ops::Deref,
 };
 
+use bitvec::{slice::BitSlice, vec::BitVec};
 use dumpster::{unsync::Gc, Collectable};
-use itertools::Itertools;
 
 use crate::{
     dialect::{
@@ -16,10 +17,9 @@ use crate::{
         Accessor, Attribute, Block, Context, OpaqueAttr, OpaqueOperation, OperandPosition,
         Operation, Region, RewritePattern, Rewriter, Value, ValueOwner,
     },
-    utils::ApInt,
 };
 
-use super::BlockPosition;
+use super::{AttributeData, BlockPosition, DictionaryData, OpaqueAttributeData};
 
 // TODO: proper error handling instead of assert
 
@@ -45,7 +45,7 @@ impl GcContext {
     }
 
     fn get(&self) -> std::cell::Ref<'_, GcContextInner> {
-        self.0.borrow()
+        (*self.0).borrow()
     }
 
     fn get_mut(&self) -> std::cell::RefMut<'_, GcContextInner> {
@@ -64,6 +64,10 @@ impl Context for GcContext {
     type Rewriter<'rewrite> = GcRewriter;
 
     type Program<'ctx> = GcProgram;
+
+    type BitsData<'data> = GcBits;
+    type ArrayData<'data, 'rewrite, 'a> = GcArrayData;
+    type DictionaryData<'data, 'rewrite, 'a> = GcDictionaryData;
 
     type OpaqueOperation<'rewrite> = GcOperationRef;
     type OpaqueAttr<'rewrite> = GcAttributeRef;
@@ -104,6 +108,63 @@ impl Context for GcContext {
             ctx: self.clone(),
             root: program.op.clone(),
         })
+    }
+}
+
+pub struct CollectableBitVec(BitVec);
+
+unsafe impl Collectable for CollectableBitVec {
+    fn accept<V: dumpster::Visitor>(&self, _: &mut V) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+#[derive(Collectable, Clone)]
+pub struct GcBits(Gc<CollectableBitVec>);
+
+impl GcBits {
+    pub fn new(vec: BitVec) -> Self {
+        Self(Gc::new(CollectableBitVec(vec)))
+    }
+}
+
+impl Deref for GcBits {
+    type Target = BitSlice;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0 .0
+    }
+}
+
+#[derive(Collectable, Clone)]
+pub struct GcArrayData(Gc<Vec<GcAttributeRef>>);
+
+impl GcArrayData {
+    pub fn new(array: Vec<GcAttributeRef>) -> Self {
+        Self(Gc::new(array))
+    }
+}
+
+impl Deref for GcArrayData {
+    type Target = [GcAttributeRef];
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+#[derive(Collectable, Clone)]
+pub struct GcDictionaryData(Gc<HashMap<String, GcAttributeRef>>);
+
+impl GcDictionaryData {
+    pub fn new(dict: HashMap<String, GcAttributeRef>) -> Self {
+        Self(Gc::new(dict))
+    }
+}
+
+impl<'data, 'rewrite, 'a> DictionaryData<'data, 'rewrite, 'a, GcContext> for GcDictionaryData {
+    fn get(&self, data: &str) -> Option<GcAttributeRef> {
+        self.0.get(data).cloned()
     }
 }
 
@@ -180,15 +241,11 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         GcValueRef::new(GcValue {
             valid: true,
             r#type: r#type,
-            owner: GcValueOwner::Placeholder,
+            owner: ValueOwner::Placeholder,
             uses: HashSet::new(),
         })
     }
-
-    fn get_int_data_attr(&self, data: ApInt) -> GcAttributeRef {
-        todo!()
-    }
-
+    
     fn get_string_attr(&self, data: impl ToString) -> GcAttributeRef {
         todo!()
     }
@@ -293,7 +350,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
                 .map(|x| {
                     GcValueRef::new(GcValue {
                         valid: true,
-                        owner: GcValueOwner::Placeholder,
+                        owner: ValueOwner::Placeholder,
                         r#type: x.clone(),
                         uses: HashSet::new(),
                     })
@@ -310,14 +367,14 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         op.get_mut()
             .results
             .iter_mut()
-            .for_each(|x| x.get_mut().owner = GcValueOwner::Operation(op.clone()));
+            .for_each(|x| x.get_mut().owner = ValueOwner::Operation(op.clone()));
 
         op
     }
 
-    fn create_parameterized_attribute<A: AttributeKind>(
+    fn create_attribute<'data, A: AttributeKind>(
         &self,
-        parameters: &[GcAttributeRef],
+        data: OpaqueAttributeData<'data, 'rewrite, GcContext>,
     ) -> GcAttributeRef {
         assert!(self.ctx.get().attr_kinds.contains_key(&TypeId::of::<A>()));
         GcAttributeRef::new(GcAttribute {
@@ -328,7 +385,19 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
                 .get(&TypeId::of::<A>())
                 .expect("already checked")
                 .clone(),
-            data: GcAttributeData::Parameterized(parameters.into()),
+            data: match data {
+                OpaqueAttributeData::Bits(bits) => GcAttributeData::Bits(GcBits::new(bits)),
+                OpaqueAttributeData::Array(array) => {
+                    GcAttributeData::Array(GcArrayData::new(array.to_owned()))
+                }
+                OpaqueAttributeData::Dictionary(dict) => {
+                    GcAttributeData::Dictionary(GcDictionaryData::new(
+                        dict.iter()
+                            .map(|(k, v)| (k.to_string(), v.clone()))
+                            .collect(),
+                    ))
+                }
+            },
         })
     }
 
@@ -347,10 +416,13 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
             last.get_mut().next = None;
         }
 
-        operations
-            .iter()
-            .tuple_windows()
-            .for_each(|(x, y)| link_ops(x, y));
+        {
+            use itertools::Itertools;
+            operations
+                .iter()
+                .tuple_windows()
+                .for_each(|(x, y)| link_ops(x, y));
+        }
 
         let block = GcBlockRef::new(GcBlock {
             valid: true,
@@ -362,7 +434,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
                 .map(|x| {
                     GcValueRef::new(GcValue {
                         valid: true,
-                        owner: GcValueOwner::Placeholder,
+                        owner: ValueOwner::Placeholder,
                         r#type: x.clone(),
                         uses: HashSet::new(),
                     })
@@ -374,7 +446,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
             .get_mut()
             .arguments
             .iter_mut()
-            .for_each(|v| v.get_mut().owner = GcValueOwner::BlockArgument(block.clone()));
+            .for_each(|v| v.get_mut().owner = ValueOwner::BlockArgument(block.clone()));
 
         block
     }
@@ -467,7 +539,7 @@ impl GcOperationRef {
     }
 
     fn get(&self) -> std::cell::Ref<'_, GcOperation> {
-        self.0.borrow()
+        (*self.0).borrow()
     }
 
     fn get_mut(&self) -> std::cell::RefMut<'_, GcOperation> {
@@ -576,25 +648,19 @@ impl<'rewrite> OpaqueOperation<'rewrite, GcContext> for GcOperationRef {
     ) -> <GcContext as Context>::Operation<'rewrite, 'a> {
         self.clone()
     }
+}
 
-    fn copy(&self) -> Self {
-        self.clone()
-    }
+#[derive(Collectable)]
+enum GcAttributeData {
+    Bits(GcBits),
+    Array(GcArrayData),
+    Dictionary(GcDictionaryData),
 }
 
 #[derive(Collectable)]
 pub struct GcAttribute {
     kind: Gc<GcAttrKindVtable>,
     data: GcAttributeData,
-}
-
-#[derive(Collectable)]
-pub enum GcAttributeData {
-    IntData(ApInt),
-    StringAttr(String),
-    ArrayAttr(Vec<GcAttributeRef>),
-    DictionaryAttr(HashMap<String, GcAttributeRef>),
-    Parameterized(Vec<GcAttributeRef>),
 }
 
 #[derive(Collectable, Clone)]
@@ -606,7 +672,7 @@ impl GcAttributeRef {
     }
 
     fn get(&self) -> std::cell::Ref<'_, GcAttribute> {
-        self.0.borrow()
+        (*self.0).borrow()
     }
 
     fn get_mut(&self) -> std::cell::RefMut<'_, GcAttribute> {
@@ -622,6 +688,18 @@ impl<'rewrite, 'a> Attribute<'rewrite, 'a, GcContext> for GcAttributeRef {
     fn dyn_cast<K: AttributeKind>(&self) -> Option<K::Access<'rewrite, 'a, GcContext>> {
         K::access(self.clone())
     }
+
+    fn data<'data>(&'data self) -> AttributeData<'data, 'rewrite, 'a, GcContext> {
+        match &self.get().data {
+            GcAttributeData::Bits(bits) => AttributeData::Bits(bits.clone()),
+            GcAttributeData::Array(array) => AttributeData::Array(array.clone()),
+            GcAttributeData::Dictionary(dict) => AttributeData::Dictionary(dict.clone()),
+        }
+    }
+
+    fn opaque(&self) -> <GcContext as Context>::OpaqueAttr<'rewrite> {
+        todo!()
+    }
 }
 
 impl<'rewrite> OpaqueAttr<'rewrite, GcContext> for GcAttributeRef {
@@ -629,10 +707,6 @@ impl<'rewrite> OpaqueAttr<'rewrite, GcContext> for GcAttributeRef {
         &self,
         _: &'a <GcContext as Context>::Accessor<'rewrite>,
     ) -> <GcContext as Context>::Attribute<'rewrite, 'a> {
-        self.clone()
-    }
-
-    fn copy(&self) -> Self {
         self.clone()
     }
 }
@@ -684,7 +758,7 @@ impl GcBlockRef {
     }
 
     fn get(&self) -> std::cell::Ref<'_, GcBlock> {
-        self.0.borrow()
+        (*self.0).borrow()
     }
 
     fn get_mut(&self) -> std::cell::RefMut<'_, GcBlock> {
@@ -733,7 +807,7 @@ impl GcRegionRef {
     }
 
     fn get(&self) -> std::cell::Ref<'_, GcRegion> {
-        self.0.borrow()
+        (*self.0).borrow()
     }
 
     fn get_mut(&self) -> std::cell::RefMut<'_, GcRegion> {
@@ -763,35 +837,18 @@ impl<'rewrite, 'a> Region<'rewrite, 'a, GcContext> for GcRegionRef {
 pub struct GcValue {
     valid: bool,
 
-    owner: GcValueOwner,
+    owner: ValueOwner<'static, 'static, GcContext>,
     r#type: GcAttributeRef,
 
     uses: HashSet<(GcAttributeRef, OperandPosition)>,
 }
 
-#[derive(Collectable)]
-pub enum GcValueOwner {
-    Placeholder,
-    BlockArgument(GcBlockRef),
-    Operation(GcOperationRef),
-}
-
-impl<'rewrite, 'a> From<ValueOwner<'rewrite, 'a, GcContext>> for GcValueOwner {
-    fn from(value: ValueOwner<'rewrite, 'a, GcContext>) -> Self {
-        match value {
-            ValueOwner::Placeholder => Self::Placeholder,
-            ValueOwner::BlockArgument(x) => Self::BlockArgument(x),
-            ValueOwner::Operation(x) => Self::Operation(x),
-        }
-    }
-}
-
-impl<'rewrite, 'a> From<GcValueOwner> for ValueOwner<'rewrite, 'a, GcContext> {
-    fn from(value: GcValueOwner) -> Self {
-        match value {
-            GcValueOwner::Placeholder => Self::Placeholder,
-            GcValueOwner::BlockArgument(x) => Self::BlockArgument(x),
-            GcValueOwner::Operation(x) => Self::Operation(x),
+unsafe impl<'rewrite, 'a> Collectable for ValueOwner<'rewrite, 'a, GcContext> {
+    fn accept<V: dumpster::Visitor>(&self, visitor: &mut V) -> Result<(), ()> {
+        match self {
+            Self::Placeholder => Ok(()),
+            Self::BlockArgument(x) => x.accept(visitor),
+            Self::Operation(x) => x.accept(visitor),
         }
     }
 }
@@ -811,7 +868,7 @@ impl GcValueRef {
     }
 
     fn get(&self) -> std::cell::Ref<'_, GcValue> {
-        self.0.borrow()
+        (*self.0).borrow()
     }
 
     fn get_mut(&self) -> std::cell::RefMut<'_, GcValue> {

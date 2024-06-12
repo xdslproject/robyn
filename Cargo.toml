@@ -10,3 +10,4 @@ gc = ["dumpster", "itertools"]
 [dependencies]
 dumpster = { optional = true, version = "0.2.1", features = ["derive"] }
 itertools = { optional = true, version = "0.13.0" }
+bitvec = { version = "1.0.1" }

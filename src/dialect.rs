@@ -1,6 +1,4 @@
-use std::ops::Deref;
-
-use crate::ir::{Attribute, Context, OpaqueAttr, OpaqueOperation, Operation};
+use crate::ir::Context;
 
 pub mod builtin;
 

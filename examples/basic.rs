@@ -38,7 +38,7 @@ impl<C: Context> RewritePattern<C> for BarPattern {
 fn main() {
     let ctx = GcContext::new();
 
-    let mut program = ctx.empty_program();
+    let mut program = ctx.module_program();
 
     ctx.apply_pattern(&mut program, &FooPattern);
     ctx.apply_pattern(&mut program, &BarPattern);

@@ -10,4 +10,5 @@ gc = ["dumpster", "itertools"]
 [dependencies]
 dumpster = { optional = true, version = "0.2.1", features = ["derive"] }
 itertools = { optional = true, version = "0.13.0" }
-bitvec = { version = "1.0.1" }
+thiserror = "1.0.61"
+bytemuck = { version = "1.16.0", features = ["must_cast"] }

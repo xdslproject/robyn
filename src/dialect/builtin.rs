@@ -1,8 +1,9 @@
-use bitvec::{field::BitField, vec::BitVec};
-
 use crate::{
-    ir::{Attribute, AttributeData, Context, OpaqueAttributeData, Operation, Region, Rewriter},
-    utils::bitvec::BitVecUtils,
+    ir::{
+        AttrData, Attribute, AttributeData, Context, OpaqueAttributeData, Operation, Region,
+        Rewriter,
+    },
+    utils::bitbox::{BitBox, TooManyBytesError},
 };
 
 use super::{
@@ -76,16 +77,17 @@ impl StringAttr {
     pub fn create<'rewrite, C: Context>(
         rewriter: &C::Rewriter<'rewrite>,
         data: &[u8],
-    ) -> C::OpaqueAttr<'rewrite> {
-        rewriter.create_attribute::<StringAttr>(OpaqueAttributeData::Bits(BitVec::from_bytes(data)))
+    ) -> Result<C::OpaqueAttr<'rewrite>, TooManyBytesError> {
+        Ok(rewriter
+            .create_attribute::<StringAttr>(OpaqueAttributeData::Bits(BitBox::from_bytes(data)?)))
     }
 }
 
-impl<'rewrite, 'a, C: Context> StringAttrAccess<'rewrite, 'a, C> {
-    pub fn as_bytes(&self) -> &[u8] {
+impl<'rewrite, 'a, C: Context + 'a> StringAttrAccess<'rewrite, 'a, C> {
+    pub fn as_bytes<'data>(&'data self) -> impl AttrData<'data, [u8]> {
         let AttributeData::Bits(bits) = self.as_ref().data() else {
-            unreachable!()
+            unreachable!("verified")
         };
-        
+        bits.map_ref(|x| x.as_bytes().expect("verified"))
     }
 }

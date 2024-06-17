@@ -1,25 +1,26 @@
 use std::{
     any::TypeId,
+    borrow::Borrow,
     cell::{Ref, RefCell},
     collections::{HashMap, HashSet},
     ops::Deref,
 };
 
-use bitvec::{slice::BitSlice, vec::BitVec};
 use dumpster::{unsync::Gc, Collectable};
 
 use crate::{
     dialect::{
-        builtin::{BuiltinDialect, ModuleOp},
+        builtin::{BuiltinDialect, ModuleOp, StringAttr},
         AttributeKind, Dialect, OperationKind,
     },
     ir::{
         Accessor, Attribute, Block, Context, OpaqueAttr, OpaqueOperation, OperandPosition,
         Operation, Region, RewritePattern, Rewriter, Value, ValueOwner,
     },
+    utils::bitbox::BitBox,
 };
 
-use super::{AttributeData, BlockPosition, DictionaryData, OpaqueAttributeData};
+use super::{AttrData, AttributeData, BlockPosition, DictionaryData, OpaqueAttributeData};
 
 // TODO: proper error handling instead of assert
 
@@ -65,9 +66,8 @@ impl Context for GcContext {
 
     type Program<'ctx> = GcProgram;
 
-    type BitsData<'data> = GcBits;
-    type ArrayData<'data, 'rewrite, 'a> = GcArrayData;
-    type DictionaryData<'data, 'rewrite, 'a> = GcDictionaryData;
+    type AttrData<'data, T> = GcAttrData<'data, T> where T: ?Sized + 'data;
+    type DictionaryData<'rewrite, 'a> = HashMap<String, GcAttributeRef>;
 
     type OpaqueOperation<'rewrite> = GcOperationRef;
     type OpaqueAttr<'rewrite> = GcAttributeRef;
@@ -93,7 +93,7 @@ impl Context for GcContext {
         );
     }
 
-    fn empty_program<'ctx>(&'ctx self) -> GcProgram {
+    fn module_program<'ctx>(&'ctx self) -> GcProgram {
         GcProgram {
             op: ModuleOp::create::<GcContext>(&GcRewriter { ctx: self.clone() }),
         }
@@ -111,60 +111,29 @@ impl Context for GcContext {
     }
 }
 
-pub struct CollectableBitVec(BitVec);
+pub struct GcAttrData<'data, T: ?Sized + 'data>(Ref<'data, T>);
 
-unsafe impl Collectable for CollectableBitVec {
-    fn accept<V: dumpster::Visitor>(&self, _: &mut V) -> Result<(), ()> {
-        Ok(())
-    }
-}
-
-#[derive(Collectable, Clone)]
-pub struct GcBits(Gc<CollectableBitVec>);
-
-impl GcBits {
-    pub fn new(vec: BitVec) -> Self {
-        Self(Gc::new(CollectableBitVec(vec)))
-    }
-}
-
-impl Deref for GcBits {
-    type Target = BitSlice;
+impl<'data, T: ?Sized> Deref for GcAttrData<'data, T> {
+    type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &*self.0 .0
+        self.0.borrow()
     }
 }
 
-#[derive(Collectable, Clone)]
-pub struct GcArrayData(Gc<Vec<GcAttributeRef>>);
-
-impl GcArrayData {
-    pub fn new(array: Vec<GcAttributeRef>) -> Self {
-        Self(Gc::new(array))
+impl<'data, T: ?Sized> AttrData<'data, T> for GcAttrData<'data, T> {
+    fn map_ref<F, U>(self, f: F) -> impl AttrData<'data, U>
+    where
+        F: FnOnce(&T) -> &U,
+        U: 'data + ?Sized,
+    {
+        GcAttrData(Ref::map::<U, F>(self.0, f))
     }
 }
 
-impl Deref for GcArrayData {
-    type Target = [GcAttributeRef];
-
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-#[derive(Collectable, Clone)]
-pub struct GcDictionaryData(Gc<HashMap<String, GcAttributeRef>>);
-
-impl GcDictionaryData {
-    pub fn new(dict: HashMap<String, GcAttributeRef>) -> Self {
-        Self(Gc::new(dict))
-    }
-}
-
-impl<'data, 'rewrite, 'a> DictionaryData<'data, 'rewrite, 'a, GcContext> for GcDictionaryData {
+impl<'rewrite, 'a> DictionaryData<'rewrite, 'a, GcContext> for HashMap<String, GcAttributeRef> {
     fn get(&self, data: &str) -> Option<GcAttributeRef> {
-        self.0.get(data).cloned()
+        self.get(data).cloned()
     }
 }
 
@@ -245,9 +214,11 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
             uses: HashSet::new(),
         })
     }
-    
-    fn get_string_attr(&self, data: impl ToString) -> GcAttributeRef {
-        todo!()
+
+    fn get_string_attr(&self, data: &[u8]) -> GcAttributeRef {
+        self.create_attribute::<StringAttr>(OpaqueAttributeData::Bits(
+            BitBox::from_bytes(data).expect("TODO"),
+        ))
     }
 
     fn replace_op(&self, op: GcOperationRef, with: GcOperationRef) {
@@ -386,17 +357,13 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
                 .expect("already checked")
                 .clone(),
             data: match data {
-                OpaqueAttributeData::Bits(bits) => GcAttributeData::Bits(GcBits::new(bits)),
-                OpaqueAttributeData::Array(array) => {
-                    GcAttributeData::Array(GcArrayData::new(array.to_owned()))
-                }
-                OpaqueAttributeData::Dictionary(dict) => {
-                    GcAttributeData::Dictionary(GcDictionaryData::new(
-                        dict.iter()
-                            .map(|(k, v)| (k.to_string(), v.clone()))
-                            .collect(),
-                    ))
-                }
+                OpaqueAttributeData::Bits(bits) => GcAttributeData::Bits(bits),
+                OpaqueAttributeData::Array(array) => GcAttributeData::Array(array.to_owned()),
+                OpaqueAttributeData::Dictionary(dict) => GcAttributeData::Dictionary(
+                    dict.iter()
+                        .map(|(k, v)| (k.to_string(), v.clone()))
+                        .collect(),
+                ),
             },
         })
     }
@@ -652,9 +619,9 @@ impl<'rewrite> OpaqueOperation<'rewrite, GcContext> for GcOperationRef {
 
 #[derive(Collectable)]
 enum GcAttributeData {
-    Bits(GcBits),
-    Array(GcArrayData),
-    Dictionary(GcDictionaryData),
+    Bits(BitBox),
+    Array(Vec<GcAttributeRef>),
+    Dictionary(HashMap<String, GcAttributeRef>),
 }
 
 #[derive(Collectable)]
@@ -690,10 +657,40 @@ impl<'rewrite, 'a> Attribute<'rewrite, 'a, GcContext> for GcAttributeRef {
     }
 
     fn data<'data>(&'data self) -> AttributeData<'data, 'rewrite, 'a, GcContext> {
+        #[inline(always)]
+        fn force_extract_bits(r: Ref<'_, GcAttribute>) -> Ref<'_, BitBox> {
+            Ref::map(r, |r| match &r.data {
+                GcAttributeData::Bits(bits) => bits,
+                _ => unreachable!(),
+            })
+        }
+
+        #[inline(always)]
+        fn force_extract_array(r: Ref<'_, GcAttribute>) -> Ref<'_, [GcAttributeRef]> {
+            Ref::map(r, |r| match &r.data {
+                GcAttributeData::Array(arr) => arr.as_ref(),
+                _ => unreachable!(),
+            })
+        }
+
+        #[inline(always)]
+        fn force_extract_dict(r: Ref<'_, GcAttribute>) -> Ref<'_, HashMap<String, GcAttributeRef>> {
+            Ref::map(r, |r| match &r.data {
+                GcAttributeData::Dictionary(arr) => arr,
+                _ => unreachable!(),
+            })
+        }
+
         match &self.get().data {
-            GcAttributeData::Bits(bits) => AttributeData::Bits(bits.clone()),
-            GcAttributeData::Array(array) => AttributeData::Array(array.clone()),
-            GcAttributeData::Dictionary(dict) => AttributeData::Dictionary(dict.clone()),
+            GcAttributeData::Bits(_) => {
+                AttributeData::Bits(GcAttrData(force_extract_bits(self.get())))
+            }
+            GcAttributeData::Array(_) => {
+                AttributeData::Array(GcAttrData(force_extract_array(self.get())))
+            }
+            GcAttributeData::Dictionary(_) => {
+                AttributeData::Dictionary(GcAttrData(force_extract_dict(self.get())))
+            }
         }
     }
 

@@ -1,16 +1,13 @@
 #[cfg(feature = "gc")]
 mod gc;
-use std::{
-    collections::HashMap,
-    ops::{Deref, Index},
-};
-
-use bitvec::{slice::BitSlice, vec::BitVec};
 #[cfg(feature = "gc")]
 pub use gc::GcContext;
 
+use std::ops::Deref;
+
 use crate::{
     dialect::{AttributeKind, OperationKind},
+    utils::bitbox::BitBox,
 };
 
 pub type OperandPosition = usize;
@@ -31,9 +28,11 @@ pub trait Context: Sized {
     where
         Self: 'ctx;
 
-    type BitsData<'data>: Deref<Target = BitSlice>;
-    type ArrayData<'data, 'rewrite, 'a>: Deref<Target = [Self::Attribute<'a, 'rewrite>]>;
-    type DictionaryData<'data, 'rewrite, 'a>: DictionaryData<'data, 'rewrite, 'a, Self>;
+    /// Handle to access the data storage of an attribute.
+    type AttrData<'data, T>: AttrData<'data, T>
+    where
+        T: ?Sized + 'data;
+    type DictionaryData<'rewrite, 'a>: DictionaryData<'rewrite, 'a, Self>;
 
     // Rewriting
     type Accessor<'rewrite>: Accessor<'rewrite, Self>;
@@ -48,7 +47,7 @@ pub trait Context: Sized {
     fn register_operation<O: OperationKind>(&mut self);
     fn register_attribute<A: AttributeKind>(&mut self);
 
-    fn empty_program<'ctx>(&'ctx self) -> Self::Program<'ctx>;
+    fn module_program<'ctx>(&'ctx self) -> Self::Program<'ctx>;
 
     /// Applies the provided pattern to the top level operation of the provided program.
     fn apply_pattern<'ctx, P: RewritePattern<Self>>(
@@ -58,7 +57,16 @@ pub trait Context: Sized {
     );
 }
 
-pub trait DictionaryData<'data, 'rewrite, 'a, C: Context> {
+pub trait AttrData<'data, T: ?Sized>: Deref<Target = T> {
+    /// Maps a handle to a value referencing attribute data to another value
+    /// referencing attribute data.
+    fn map_ref<F, U>(self, f: F) -> impl AttrData<'data, U>
+    where
+        F: FnOnce(&T) -> &U,
+        U: 'data + ?Sized;
+}
+
+pub trait DictionaryData<'rewrite, 'a, C: Context> {
     fn get(&self, data: &str) -> Option<C::Attribute<'rewrite, 'a>>;
 }
 
@@ -89,7 +97,7 @@ pub trait Accessor<'rewrite, C: Context> {
 pub trait Rewriter<'rewrite, C: Context> {
     fn get_placeholder_value(&self, r#type: C::OpaqueAttr<'rewrite>) -> C::OpaqueValue<'rewrite>;
 
-    fn get_string_attr(&self, data: impl ToString) -> C::OpaqueAttr<'rewrite>;
+    fn get_string_attr(&self, data: &[u8]) -> C::OpaqueAttr<'rewrite>;
 
     /// Replaces an operation with the provided operation.
     /// After this, the replaced operation can no longer be used.
@@ -222,14 +230,18 @@ pub trait Block<'rewrite, 'a, C: Context>: Clone {
     fn opaque(&self) -> C::OpaqueBlock<'rewrite>;
 }
 
-pub enum AttributeData<'data, 'rewrite, 'a, C: Context> {
-    Bits(C::BitsData<'data>),
-    Array(C::ArrayData<'data, 'rewrite, 'a>),
-    Dictionary(C::DictionaryData<'data, 'rewrite, 'a>),
+pub enum AttributeData<'data, 'rewrite, 'a, C: Context>
+where
+    C::Attribute<'rewrite, 'a>: 'data,
+    C::DictionaryData<'rewrite, 'a>: 'data,
+{
+    Bits(C::AttrData<'data, BitBox>),
+    Array(C::AttrData<'data, [C::Attribute<'rewrite, 'a>]>),
+    Dictionary(C::AttrData<'data, C::DictionaryData<'rewrite, 'a>>),
 }
 
 pub enum OpaqueAttributeData<'data, 'rewrite, C: Context> {
-    Bits(BitVec),
+    Bits(BitBox),
     Array(&'data [C::OpaqueAttr<'rewrite>]),
     Dictionary(&'data [(&'data str, C::OpaqueAttr<'rewrite>)]),
 }

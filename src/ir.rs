@@ -53,6 +53,7 @@ pub trait Context: Sized {
     fn register_operation<O: OperationKind>(&mut self);
     fn register_attribute<A: AttributeKind>(&mut self);
 
+    /// Creates a program containing an empty module operation.
     fn module_program<'ctx>(&'ctx self) -> Self::Program<'ctx>;
 
     /// Applies the provided pattern to the top level operation of the provided program.
@@ -85,11 +86,10 @@ pub trait RewritePattern<C: Context> {
 }
 
 pub trait Accessor<'rewrite, C: Context> {
-    fn emit_diagnostic(&self, kind: ReportKind<'static>, f: impl FnOnce(Diagnostic) -> Diagnostic);
-
     fn get_root(&self) -> C::Operation<'rewrite, '_>;
 
     fn rewrite(self) -> C::Rewriter<'rewrite>;
+
     fn apply_pattern<P: RewritePattern<C>>(
         &mut self,
         pattern: &P,
@@ -103,8 +103,6 @@ pub trait Accessor<'rewrite, C: Context> {
 }
 
 pub trait Rewriter<'rewrite, C: Context> {
-    fn emit_diagnostic(&self, kind: ReportKind<'static>, f: impl FnOnce(Diagnostic) -> Diagnostic);
-
     fn get_placeholder_value(&self, r#type: C::OpaqueAttr<'rewrite>) -> C::OpaqueValue<'rewrite>;
 
     fn get_string_attr(&self, data: &[u8]) -> C::OpaqueAttr<'rewrite>;

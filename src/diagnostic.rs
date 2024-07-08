@@ -1,5 +1,7 @@
 pub use ariadne::Color;
 
+use crate::ir::Span;
+
 pub enum DiagnosticKind {
     Error,
     Warning,

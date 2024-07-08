@@ -3,7 +3,9 @@ mod gc;
 #[cfg(feature = "gc")]
 pub use gc::GcContext;
 
-use std::ops::Deref;
+use ariadne::{Report, ReportBuilder, ReportKind};
+
+use std::ops::{Deref, Range};
 
 use crate::{
     dialect::{AttributeKind, OperationKind},
@@ -15,6 +17,10 @@ pub type ResultPosition = usize;
 pub type SuccessorPosition = usize;
 pub type RegionPosition = usize;
 pub type BlockPosition = usize;
+
+pub type Diagnostic = ReportBuilder<'static, Range<usize>>;
+
+pub struct Span(usize);
 
 pub trait Context: Sized {
     // IR
@@ -79,6 +85,8 @@ pub trait RewritePattern<C: Context> {
 }
 
 pub trait Accessor<'rewrite, C: Context> {
+    fn emit_diagnostic(&self, kind: ReportKind<'static>, f: impl FnOnce(Diagnostic) -> Diagnostic);
+
     fn get_root(&self) -> C::Operation<'rewrite, '_>;
 
     fn rewrite(self) -> C::Rewriter<'rewrite>;
@@ -95,6 +103,8 @@ pub trait Accessor<'rewrite, C: Context> {
 }
 
 pub trait Rewriter<'rewrite, C: Context> {
+    fn emit_diagnostic(&self, kind: ReportKind<'static>, f: impl FnOnce(Diagnostic) -> Diagnostic);
+
     fn get_placeholder_value(&self, r#type: C::OpaqueAttr<'rewrite>) -> C::OpaqueValue<'rewrite>;
 
     fn get_string_attr(&self, data: &[u8]) -> C::OpaqueAttr<'rewrite>;

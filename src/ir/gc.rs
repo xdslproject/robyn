@@ -3,9 +3,11 @@ use std::{
     borrow::Borrow,
     cell::{Ref, RefCell},
     collections::{HashMap, HashSet},
-    ops::Deref,
+    ffi::{OsStr, OsString},
+    ops::Deref, rc::Rc,
 };
 
+use ariadne::{Report, ReportKind, Source};
 use dumpster::{unsync::Gc, Collectable};
 
 use crate::{
@@ -20,7 +22,9 @@ use crate::{
     utils::bitbox::BitBox,
 };
 
-use super::{AttrData, AttributeData, BlockPosition, DictionaryData, OpaqueAttributeData};
+use super::{
+    AttrData, AttributeData, BlockPosition, Diagnostic, DictionaryData, OpaqueAttributeData,
+};
 
 // TODO: proper error handling instead of assert
 
@@ -156,8 +160,11 @@ fn link_ops(op1: &GcOperationRef, op2: &GcOperationRef) {
 // Program
 //============================================================================//
 
+#[derive(Clone)]
 pub struct GcProgram {
     op: GcOperationRef,
+    source: Option<Source<Rc<str>>>,
+    name: Rc<OsStr>,
 }
 
 //============================================================================//
@@ -167,15 +174,31 @@ pub struct GcProgram {
 pub struct GcAccessor {
     ctx: GcContext,
     root: GcOperationRef,
+    program: GcProgram,
+}
+
+fn emit_diagnostic(
+    kind: ReportKind<'static>,
+    f: impl FnOnce(Diagnostic) -> Diagnostic,
+    program: &GcProgram,
+) {
+    f(Report::build(kind, (), 0)).finish().eprint(program.source.clone());
 }
 
 impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
+    fn emit_diagnostic(&self, kind: ReportKind<'static>, f: impl FnOnce(Diagnostic) -> Diagnostic) {
+        emit_diagnostic(kind, f, &self.program)
+    }
+
     fn get_root(&self) -> GcOperationRef {
         self.root.clone()
     }
 
     fn rewrite(self) -> GcRewriter {
-        GcRewriter { ctx: self.ctx }
+        GcRewriter {
+            ctx: self.ctx,
+            program: self.program,
+        }
     }
 
     fn apply_pattern<P: RewritePattern<GcContext>>(
@@ -186,6 +209,7 @@ impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
         pattern.match_and_rewrite(Self {
             ctx: self.ctx.clone(),
             root: operation,
+            program: self.program.clone(),
         })
     }
 
@@ -197,15 +221,21 @@ impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
         pattern.match_and_rewrite(Self {
             ctx: self.ctx.clone(),
             root: operation,
+            program: self.program.clone(),
         })
     }
 }
 
 pub struct GcRewriter {
     ctx: GcContext,
+    program: GcProgram,
 }
 
 impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
+    fn emit_diagnostic(&self, kind: ReportKind<'static>, f: impl FnOnce(Diagnostic) -> Diagnostic) {
+        emit_diagnostic(kind, f, &self.program)
+    }
+
     fn get_placeholder_value(&self, r#type: GcAttributeRef) -> GcValueRef {
         GcValueRef::new(GcValue {
             valid: true,

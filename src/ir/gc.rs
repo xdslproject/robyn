@@ -25,6 +25,7 @@ use crate::{
 
 use super::{
     AttrData, AttributeData, BlockPosition, Diagnostic, DictionaryData, OpaqueAttributeData,
+    PatternResult, SingleUseRewritePattern,
 };
 
 // TODO: proper error handling instead of assert
@@ -106,9 +107,20 @@ impl Context for GcContext {
 
     fn apply_pattern<'ctx, P: RewritePattern<Self>>(
         &'ctx self,
-        program: &mut Self::Program<'ctx>,
+        program: &mut GcProgram,
         pattern: &P,
-    ) {
+    ) -> PatternResult {
+        pattern.match_and_rewrite(GcAccessor {
+            ctx: self.clone(),
+            root: program.op.clone(),
+        })
+    }
+
+    fn apply_single_use_pattern<'ctx, P: SingleUseRewritePattern<Self>>(
+        &'ctx self,
+        program: &mut GcProgram,
+        pattern: P,
+    ) -> PatternResult {
         pattern.match_and_rewrite(GcAccessor {
             ctx: self.clone(),
             root: program.op.clone(),
@@ -181,16 +193,25 @@ impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
     }
 
     fn rewrite(self) -> GcRewriter {
-        GcRewriter {
-            ctx: self.ctx,
-        }
+        GcRewriter { ctx: self.ctx }
     }
 
     fn apply_pattern<P: RewritePattern<GcContext>>(
         &mut self,
         pattern: &P,
         operation: GcOperationRef,
-    ) {
+    ) -> PatternResult {
+        pattern.match_and_rewrite(Self {
+            ctx: self.ctx.clone(),
+            root: operation,
+        })
+    }
+
+    fn apply_single_use_pattern<P: SingleUseRewritePattern<GcContext>>(
+        &mut self,
+        pattern: P,
+        operation: GcOperationRef,
+    ) -> PatternResult {
         pattern.match_and_rewrite(Self {
             ctx: self.ctx.clone(),
             root: operation,
@@ -201,7 +222,7 @@ impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
         &mut self,
         pattern: &dyn RewritePattern<GcContext>,
         operation: GcOperationRef,
-    ) {
+    ) -> PatternResult {
         pattern.match_and_rewrite(Self {
             ctx: self.ctx.clone(),
             root: operation,

@@ -24,11 +24,21 @@ pub struct Span(usize);
 
 pub trait Context: Sized {
     // IR
-    type Operation<'rewrite, 'a>: Operation<'rewrite, 'a, Self>;
-    type Attribute<'rewrite, 'a>: Attribute<'rewrite, 'a, Self>;
-    type Block<'rewrite, 'a>: Block<'rewrite, 'a, Self>;
-    type Region<'rewrite, 'a>: Region<'rewrite, 'a, Self>;
-    type Value<'rewrite, 'a>: Value<'rewrite, 'a, Self>;
+    type Operation<'rewrite, 'a>: Operation<'rewrite, 'a, Self>
+    where
+        Self: 'rewrite;
+    type Attribute<'rewrite, 'a>: Attribute<'rewrite, 'a, Self>
+    where
+        Self: 'rewrite;
+    type Block<'rewrite, 'a>: Block<'rewrite, 'a, Self>
+    where
+        Self: 'rewrite;
+    type Region<'rewrite, 'a>: Region<'rewrite, 'a, Self>
+    where
+        Self: 'rewrite;
+    type Value<'rewrite, 'a>: Value<'rewrite, 'a, Self>
+    where
+        Self: 'rewrite;
 
     type Program<'ctx>
     where
@@ -41,14 +51,28 @@ pub trait Context: Sized {
     type DictionaryData<'rewrite, 'a>: DictionaryData<'rewrite, 'a, Self>;
 
     // Rewriting
-    type Accessor<'rewrite>: Accessor<'rewrite, Self>;
-    type Rewriter<'rewrite>: Rewriter<'rewrite, Self>;
+    type Accessor<'rewrite>: Accessor<'rewrite, Self>
+    where
+        Self: 'rewrite;
+    type Rewriter<'rewrite>: Rewriter<'rewrite, Self>
+    where
+        Self: 'rewrite;
 
-    type OpaqueOperation<'rewrite>: OpaqueOperation<'rewrite, Self>;
-    type OpaqueAttr<'rewrite>: OpaqueAttr<'rewrite, Self>;
-    type OpaqueBlock<'rewrite>;
-    type OpaqueRegion<'rewrite>;
-    type OpaqueValue<'rewrite>;
+    type OpaqueOperation<'rewrite>: OpaqueOperation<'rewrite, Self>
+    where
+        Self: 'rewrite;
+    type OpaqueAttr<'rewrite>: OpaqueAttr<'rewrite, Self>
+    where
+        Self: 'rewrite;
+    type OpaqueBlock<'rewrite>
+    where
+        Self: 'rewrite;
+    type OpaqueRegion<'rewrite>
+    where
+        Self: 'rewrite;
+    type OpaqueValue<'rewrite>
+    where
+        Self: 'rewrite;
 
     fn register_operation<O: OperationKind>(&mut self);
     fn register_attribute<A: AttributeKind>(&mut self);
@@ -61,7 +85,14 @@ pub trait Context: Sized {
         &'ctx self,
         program: &mut Self::Program<'ctx>,
         pattern: &P,
-    );
+    ) -> PatternResult;
+
+    /// Applies the provided pattern to the top level operation of the provided program.
+    fn apply_single_use_pattern<'ctx, P: SingleUseRewritePattern<Self>>(
+        &'ctx self,
+        program: &mut Self::Program<'ctx>,
+        pattern: P,
+    ) -> PatternResult;
 }
 
 pub trait AttrData<'data, T: ?Sized>: Deref<Target = T> {
@@ -82,7 +113,25 @@ pub trait DictionaryData<'rewrite, 'a, C: Context> {
 //============================================================================//
 
 pub trait RewritePattern<C: Context> {
-    fn match_and_rewrite(&self, accessor: C::Accessor<'_>);
+    fn match_and_rewrite(&self, accessor: C::Accessor<'_>) -> PatternResult;
+}
+
+pub trait SingleUseRewritePattern<C: Context> {
+    fn match_and_rewrite(self, accessor: C::Accessor<'_>) -> PatternResult;
+}
+
+impl<C: Context, P> SingleUseRewritePattern<C> for &P
+where
+    P: RewritePattern<C>,
+{
+    fn match_and_rewrite(self, accessor: <C as Context>::Accessor<'_>) -> PatternResult {
+        self.match_and_rewrite(accessor)
+    }
+}
+
+pub enum PatternResult {
+    Success,
+    Failure,
 }
 
 pub trait Accessor<'rewrite, C: Context> {
@@ -94,12 +143,17 @@ pub trait Accessor<'rewrite, C: Context> {
         &mut self,
         pattern: &P,
         operation: C::OpaqueOperation<'rewrite>,
-    );
+    ) -> PatternResult;
+    fn apply_single_use_pattern<P: SingleUseRewritePattern<C>>(
+        &mut self,
+        pattern: P,
+        operation: C::OpaqueOperation<'rewrite>,
+    ) -> PatternResult;
     fn apply_pattern_dyn(
         &mut self,
         pattern: &dyn RewritePattern<C>,
         operation: C::OpaqueOperation<'rewrite>,
-    );
+    ) -> PatternResult;
 }
 
 pub trait Rewriter<'rewrite, C: Context> {
@@ -232,13 +286,13 @@ pub trait Operation<'rewrite, 'a, C: Context>: Clone {
     fn opaque(&self) -> C::OpaqueOperation<'rewrite>;
 }
 
-pub trait Block<'rewrite, 'a, C: Context>: Clone {
+pub trait Block<'rewrite, 'a, C: 'rewrite + Context>: Clone {
     fn ops(&self) -> impl Iterator<Item = C::Operation<'rewrite, 'a>>;
 
     fn opaque(&self) -> C::OpaqueBlock<'rewrite>;
 }
 
-pub enum AttributeData<'data, 'rewrite, 'a, C: Context>
+pub enum AttributeData<'data, 'rewrite, 'a, C: 'rewrite + Context>
 where
     C::Attribute<'rewrite, 'a>: 'data,
     C::DictionaryData<'rewrite, 'a>: 'data,
@@ -248,13 +302,13 @@ where
     Dictionary(C::AttrData<'data, C::DictionaryData<'rewrite, 'a>>),
 }
 
-pub enum OpaqueAttributeData<'data, 'rewrite, C: Context> {
+pub enum OpaqueAttributeData<'data, 'rewrite, C: 'rewrite + Context> {
     Bits(BitBox),
     Array(&'data [C::OpaqueAttr<'rewrite>]),
     Dictionary(&'data [(&'data str, C::OpaqueAttr<'rewrite>)]),
 }
 
-pub trait Attribute<'rewrite, 'a, C: Context>: Clone {
+pub trait Attribute<'rewrite, 'a, C: 'rewrite + Context>: Clone {
     fn isa<K: AttributeKind>(&self) -> bool;
     fn dyn_cast<K: AttributeKind>(&self) -> Option<K::Access<'rewrite, 'a, C>>;
 
@@ -263,17 +317,17 @@ pub trait Attribute<'rewrite, 'a, C: Context>: Clone {
     fn opaque(&self) -> C::OpaqueAttr<'rewrite>;
 }
 
-pub trait Region<'rewrite, 'a, C: Context>: Clone {
+pub trait Region<'rewrite, 'a, C: 'rewrite + Context>: Clone {
     fn get_block(&self, block: BlockPosition) -> Option<C::Block<'rewrite, 'a>>;
 
     fn opaque(&self) -> C::OpaqueRegion<'rewrite>;
 }
 
-pub trait Value<'rewrite, 'a, C: Context>: Clone {
+pub trait Value<'rewrite, 'a, C: 'rewrite + Context>: Clone {
     fn opaque(&self) -> C::OpaqueValue<'rewrite>;
 }
 
-pub enum ValueOwner<'rewrite, 'a, C: Context> {
+pub enum ValueOwner<'rewrite, 'a, C: 'rewrite + Context> {
     Placeholder,
     BlockArgument(C::Block<'rewrite, 'a>),
     Operation(C::Operation<'rewrite, 'a>),

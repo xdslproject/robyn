@@ -16,7 +16,7 @@ impl<'src, C: Context, S: Read + 'src> SingleUseRewritePattern<C>
         let root_op = accessor.get_root().opaque();
         let rewriter = accessor.rewrite();
 
-        match Parser::<'_, 'src, C, S>::new(self.stream, &rewriter).parse_source_file() {
+        match Parser::<'_, '_, 'src, C, S>::new(self.stream, &rewriter).parse_source_file() {
             Ok(op) => {
                 rewriter.replace_op(root_op, op);
                 PatternResult::Success
@@ -30,14 +30,16 @@ pub type ParseResult<T> = Result<T, ParseError>;
 
 pub struct ParseError {}
 
-pub struct Parser<'parser, 'src, C: 'parser + Context, S: Read + 'src> {
+pub struct Parser<'rewriter, 'parsing, 'src, C: 'parsing + Context, S: Read + 'src> {
     stream: S,
-    rewriter: &'parser C::Rewriter<'parser>,
+    rewriter: &'rewriter C::Rewriter<'parsing>,
     _phantom: PhantomData<&'src ()>,
 }
 
-impl<'parser, 'src, C: Context, S: Read + 'src> Parser<'parser, 'src, C, S> {
-    pub fn new(stream: S, rewriter: &'parser C::Rewriter<'parser>) -> Self {
+impl<'rewriter, 'parsing, 'src, C: Context, S: Read + 'src>
+    Parser<'rewriter, 'parsing, 'src, C, S>
+{
+    pub fn new(stream: S, rewriter: &'rewriter C::Rewriter<'parsing>) -> Self {
         Self {
             stream,
             rewriter,
@@ -50,7 +52,7 @@ impl<'parser, 'src, C: Context, S: Read + 'src> Parser<'parser, 'src, C, S> {
     /// If the source file contains a single operation, returns it. Otherwise,
     /// returns a builtin.module containing the top level operations of the
     /// source file.
-    pub fn parse_source_file(&mut self) -> ParseResult<C::OpaqueOperation<'parser>> {
+    pub fn parse_source_file(&mut self) -> ParseResult<C::OpaqueOperation<'parsing>> {
         todo!()
     }
 }

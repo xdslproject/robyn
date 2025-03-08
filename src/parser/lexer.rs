@@ -1,7 +1,8 @@
 use std::{
-    io::{Bytes, Read},
-    marker::PhantomData,
+    error::Error, io::{Bytes, Read}, marker::PhantomData
 };
+
+use thiserror::Error;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TokenKind {
@@ -65,12 +66,17 @@ pub struct Token {
     span: Span,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum LexerError {
+    #[error("unexpected character at position {0}")]
     Unexpected(usize),
+    #[error("malformed ellipsis at position {0}")]
     MalformedEllipsis(usize),
+    #[error("expected suffix identifier at position {0}")]
     ExpectedSuffixIdentifier(usize),
+    #[error("string literal opened at {0} is not closed")]
     UnclosedStringLiteralAt(usize),
+    #[error("malformed float exponent at position {0}")]
     MalformedFloatExponent(usize),
 }
 

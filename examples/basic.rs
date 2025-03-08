@@ -1,12 +1,12 @@
 use robyn::{
     dialect::builtin::ModuleOp,
-    ir::{Accessor, Block, Context, GcContext, Operation, RewritePattern, Rewriter},
+    ir::{Accessor, Block, Context, GcContext, Operation, PatternResult, RewritePattern, Rewriter},
 };
 
 struct FooPattern;
 
 impl<C: Context> RewritePattern<C> for FooPattern {
-    fn match_and_rewrite(&self, accessor: C::Accessor<'_>) {
+    fn match_and_rewrite(&self, accessor: C::Accessor<'_>) -> PatternResult {
         let op = accessor
             .get_root()
             .dyn_cast::<ModuleOp>()
@@ -17,13 +17,15 @@ impl<C: Context> RewritePattern<C> for FooPattern {
         let rewriter = accessor.rewrite();
         let new_op = ModuleOp::create::<C>(&rewriter);
         rewriter.insert_op_at_start(new_op, to_insert_into);
+
+        PatternResult::Success
     }
 }
 
 struct BarPattern;
 
 impl<C: Context> RewritePattern<C> for BarPattern {
-    fn match_and_rewrite(&self, accessor: C::Accessor<'_>) {
+    fn match_and_rewrite(&self, accessor: C::Accessor<'_>) -> PatternResult {
         let block_len = accessor
             .get_root()
             .dyn_cast::<ModuleOp>()
@@ -32,6 +34,7 @@ impl<C: Context> RewritePattern<C> for BarPattern {
             .ops()
             .count();
         dbg!(block_len);
+        PatternResult::Success
     }
 }
 

@@ -399,17 +399,34 @@ impl<'src> Lexer<'src> {
             None => Ok(None),
         }
     }
+
+    pub fn resume_at(&mut self, position: usize) {
+        self.next_position = position;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Lexer, LexerError, Token, TokenKind};
 
+    struct LexerIter<'src>(Lexer<'src>);
+
+    impl Iterator for LexerIter<'_> {
+        type Item = Token;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.0.lex().unwrap()
+        }
+    }
+
     #[test]
     fn test_string_end() {
         let lexer = Lexer::new(br#""test_hello" hey"#);
         assert!(lexer.find_string_literal_end(0) == Some(12));
         assert!(lexer.find_string_literal_end(11).is_none());
+
+        let lexer = Lexer::new(br#""test\n \" hey""#);
+        assert!(lexer.find_string_literal_end(0) == Some(15));
 
         let lexer = Lexer::new(br#""test_hello"#);
         assert!(lexer.find_string_literal_end(0).is_none());
@@ -530,5 +547,128 @@ mod tests {
                 span: (1, 5).into()
             }))
         );
+    }
+
+    #[test]
+    fn test_lex_literal_ident() {
+        let lexer = Lexer::new(br#"ident _someid  "test" @"hel\"lo" @hello"#);
+        let expected = [
+            Token {
+                kind: TokenKind::BareIdentifier,
+                span: (0, 5).into(),
+            },
+            Token {
+                kind: TokenKind::BareIdentifier,
+                span: (6, 13).into(),
+            },
+            Token {
+                kind: TokenKind::StringLit,
+                span: (15, 21).into(),
+            },
+            Token {
+                kind: TokenKind::AtIdentifier,
+                span: (22, 32).into(),
+            },
+            Token {
+                kind: TokenKind::AtIdentifier,
+                span: (33, 39).into(),
+            },
+        ];
+
+        itertools::assert_equal(LexerIter(lexer), expected);
+    }
+
+    #[test]
+    fn test_punctuation() {
+        let lexer = Lexer::new(b"(a + %b) - c");
+        let expected = [
+            Token {
+                kind: TokenKind::LParen,
+                span: (0, 1).into(),
+            },
+            Token {
+                kind: TokenKind::BareIdentifier,
+                span: (1, 2).into(),
+            },
+            Token {
+                kind: TokenKind::Plus,
+                span: (3, 4).into(),
+            },
+            Token {
+                kind: TokenKind::PercentIdentifier,
+                span: (5, 7).into(),
+            },
+            Token {
+                kind: TokenKind::RParen,
+                span: (7, 8).into(),
+            },
+            Token {
+                kind: TokenKind::Minus,
+                span: (9, 10).into(),
+            },
+            Token {
+                kind: TokenKind::BareIdentifier,
+                span: (11, 12).into(),
+            },
+        ];
+
+        itertools::assert_equal(LexerIter(lexer), expected);
+    }
+
+    #[test]
+    fn test_whitespaces() {
+        let lexer = Lexer::new(b"foo 	 // hello, world! \nbar");
+        let expected = [
+            Token {
+                kind: TokenKind::BareIdentifier,
+                span: (0, 3).into(),
+            },
+            Token {
+                kind: TokenKind::BareIdentifier,
+                span: (24, 27).into(),
+            },
+        ];
+
+        itertools::assert_equal(LexerIter(lexer), expected);
+    }
+
+    #[test]
+    fn test_weird_identifiers() {
+        let mut lexer = Lexer::new(b"^foo$bar.test-dash_under");
+        assert_eq!(
+            lexer.lex(),
+            Ok(Some(Token {
+                kind: TokenKind::CaretIdentifier,
+                span: (0, 24).into()
+            }))
+        );
+        assert!(lexer.lex() == Ok(None));
+
+        let mut lexer = Lexer::new(b"!0123a");
+        assert_eq!(
+            lexer.lex(),
+            Ok(Some(Token {
+                kind: TokenKind::ExclamationIdentifier,
+                span: (0, 5).into()
+            }))
+        );
+        assert_eq!(
+            lexer.lex(),
+            Ok(Some(Token {
+                kind: TokenKind::BareIdentifier,
+                span: (5, 6).into()
+            }))
+        );
+        assert!(lexer.lex() == Ok(None));
+
+        let mut lexer = Lexer::new(b"#-_$.");
+        assert_eq!(
+            lexer.lex(),
+            Ok(Some(Token {
+                kind: TokenKind::HashIdentifier,
+                span: (0, 5).into()
+            }))
+        );
+        assert!(lexer.lex() == Ok(None));
     }
 }

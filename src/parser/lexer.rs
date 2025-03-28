@@ -1,29 +1,15 @@
 use std::{
-    error::Error, io::{Bytes, Read}, marker::PhantomData
+    error::Error,
+    fmt,
+    io::{Bytes, Read},
+    marker::PhantomData,
+    ops::Deref,
 };
 
 use thiserror::Error;
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum TokenKind {
-    /// bare-id ::= (letter|[_]) (letter|digit|[_$.])*
-    BareIdentifier,
-    /// at-ident ::= `@` (bare-id | string-literal)
-    AtIdentifier,
-    /// hash-ident ::= `#` (digit+ | (letter|[$._-]) (letter|[$._-]|digit)*)
-    HashIdentifier,
-    /// percent-ident ::= `%` (digit+ | (letter|[$._-]) (letter|[$._-]|digit)*)
-    PercentIdentifier,
-    /// caret-ident ::= `^` (digit+ | (letter|[$._-]) (letter|[$._-]|digit)*)
-    CaretIdentifier,
-    /// exclamation-ident ::= `!` (digit+ | (letter|[$._-]) (letter|[$._-]|digit)*)
-    ExclamationIdentifier,
-
-    IntLit,
-    FloatLit,
-    StringLit,
-    BytesLit,
-
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Punctuation {
     Arrow,
     Colon,
     Comma,
@@ -46,30 +32,102 @@ pub enum TokenKind {
     FileMetadataEnd,
 }
 
-/// Represents a span within the source file.
-/// The start character is included in the span while the end character is excluded.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Span {
-    start: usize,
-    end: usize,
+impl Punctuation {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Punctuation::Arrow => "->",
+            Punctuation::Colon => ":",
+            Punctuation::Comma => ",",
+            Punctuation::Ellipsis => "...",
+            Punctuation::Equal => "=",
+            Punctuation::Greater => ">",
+            Punctuation::LBrace => "{",
+            Punctuation::LParen => "(",
+            Punctuation::LSquare => "[",
+            Punctuation::Less => "<",
+            Punctuation::Minus => "-",
+            Punctuation::Plus => "+",
+            Punctuation::Question => "?",
+            Punctuation::RBrace => "}",
+            Punctuation::RParen => ")",
+            Punctuation::RSquare => "]",
+            Punctuation::Star => "*",
+            Punctuation::VerticalBar => "|",
+            Punctuation::FileMetadataBegin => "{-#",
+            Punctuation::FileMetadataEnd => "#-}",
+        }
+    }
+
+    pub const fn len(&self) -> usize {
+        self.as_str().len()
+    }
 }
 
-impl From<(usize, usize)> for Span {
+impl fmt::Display for Punctuation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum TokenKind {
+    /// bare-id ::= (letter|[_]) (letter|digit|[_$.])*
+    BareIdentifier,
+    /// at-ident ::= `@` (bare-id | string-literal)
+    AtIdentifier,
+    /// hash-ident ::= `#` (digit+ | (letter|[$._-]) (letter|[$._-]|digit)*)
+    HashIdentifier,
+    /// percent-ident ::= `%` (digit+ | (letter|[$._-]) (letter|[$._-]|digit)*)
+    PercentIdentifier,
+    /// caret-ident ::= `^` (digit+ | (letter|[$._-]) (letter|[$._-]|digit)*)
+    CaretIdentifier,
+    /// exclamation-ident ::= `!` (digit+ | (letter|[$._-]) (letter|[$._-]|digit)*)
+    ExclamationIdentifier,
+
+    IntLit,
+    FloatLit,
+    StringLit,
+    BytesLit,
+
+    Punctuation(Punctuation),
+}
+
+/// Represents a span within the source file.
+/// The start character is included in the span while the end character is excluded.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct LexicalSpan {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl fmt::Display for LexicalSpan {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}..{}", self.start, self.end)
+    }
+}
+
+impl From<(usize, usize)> for LexicalSpan {
     fn from((start, end): (usize, usize)) -> Self {
         Self { start, end }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Token {
-    kind: TokenKind,
-    span: Span,
+    pub kind: TokenKind,
+    pub span: LexicalSpan,
 }
 
-#[derive(Error, Debug, PartialEq, Eq)]
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Token({:?}, {})", self.kind, self.span)
+    }
+}
+
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum LexerError {
-    #[error("unexpected character at position {0}")]
-    Unexpected(usize),
+    #[error("unexpected character '{0}' at position {1}")]
+    Unexpected(u8, usize),
     #[error("malformed ellipsis at position {0}")]
     MalformedEllipsis(usize),
     #[error("expected suffix identifier at position {0}")]
@@ -80,17 +138,25 @@ pub enum LexerError {
     MalformedFloatExponent(usize),
 }
 
+type LexerResult<T> = Result<T, LexerError>;
+
 pub struct Lexer<'src> {
     source: &'src [u8],
     next_position: usize,
+    peek_cache: LexerResult<Option<Token>>,
+    peek_cache_position: usize,
 }
 
 impl<'src> Lexer<'src> {
     pub fn new(source: &'src [u8]) -> Self {
-        Self {
+        let mut lexer = Self {
             source,
             next_position: 0,
-        }
+            peek_cache: Ok(None),
+            peek_cache_position: 0,
+        };
+        lexer.peek_cache = lexer.lex_next();
+        lexer
     }
 
     /// Return the end of an assumed valid bare identifier starting at
@@ -153,17 +219,17 @@ impl<'src> Lexer<'src> {
         self.next_position = end_position;
     }
 
-    fn lex_punctuation(&mut self, kind: TokenKind, length: usize) -> Token {
+    fn lex_punctuation(&mut self, kind: Punctuation) -> Token {
         let position = self.next_position;
-        self.next_position += length;
+        self.next_position += kind.len();
         Token {
-            kind,
+            kind: TokenKind::Punctuation(kind),
             span: (position, self.next_position).into(),
         }
     }
 
     /// Assumes next_position is the first character of the number literal.
-    fn lex_number(&mut self) -> Result<Token, LexerError> {
+    fn lex_number(&mut self) -> LexerResult<Token> {
         let start_position = self.next_position;
         let token = if self
             .source
@@ -250,7 +316,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Assumes next position is at prefix.
-    fn lex_prefixed_identifier(&mut self, kind: TokenKind) -> Result<Token, LexerError> {
+    fn lex_prefixed_identifier(&mut self, kind: TokenKind) -> LexerResult<Token> {
         let position = self.next_position;
         let &identifier_first_character = self
             .source
@@ -294,7 +360,7 @@ impl<'src> Lexer<'src> {
         })
     }
 
-    fn lex_string_literal(&mut self) -> Result<Token, LexerError> {
+    fn lex_string_literal(&mut self) -> LexerResult<Token> {
         let start_position = self.next_position;
         let end_position = self
             .find_string_literal_end(start_position)
@@ -306,7 +372,7 @@ impl<'src> Lexer<'src> {
         })
     }
 
-    fn lex_symbol(&mut self) -> Result<Token, LexerError> {
+    fn lex_symbol(&mut self) -> LexerResult<Token> {
         if self.source.get(self.next_position + 1) == Some(&b'"') {
             let start_position = self.next_position;
             let end_position = self
@@ -322,24 +388,24 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    pub fn lex(&mut self) -> Result<Option<Token>, LexerError> {
+    fn lex_next(&mut self) -> LexerResult<Option<Token>> {
         self.skip_whitespaces();
 
         match self.source.get(self.next_position).copied() {
-            Some(b':') => Ok(Some(self.lex_punctuation(TokenKind::Colon, 1))),
-            Some(b',') => Ok(Some(self.lex_punctuation(TokenKind::Comma, 1))),
-            Some(b'(') => Ok(Some(self.lex_punctuation(TokenKind::LParen, 1))),
-            Some(b')') => Ok(Some(self.lex_punctuation(TokenKind::RParen, 1))),
-            Some(b'}') => Ok(Some(self.lex_punctuation(TokenKind::RBrace, 1))),
-            Some(b'[') => Ok(Some(self.lex_punctuation(TokenKind::LSquare, 1))),
-            Some(b']') => Ok(Some(self.lex_punctuation(TokenKind::RSquare, 1))),
-            Some(b'<') => Ok(Some(self.lex_punctuation(TokenKind::Less, 1))),
-            Some(b'>') => Ok(Some(self.lex_punctuation(TokenKind::Greater, 1))),
-            Some(b'=') => Ok(Some(self.lex_punctuation(TokenKind::Equal, 1))),
-            Some(b'+') => Ok(Some(self.lex_punctuation(TokenKind::Plus, 1))),
-            Some(b'*') => Ok(Some(self.lex_punctuation(TokenKind::Star, 1))),
-            Some(b'?') => Ok(Some(self.lex_punctuation(TokenKind::Question, 1))),
-            Some(b'|') => Ok(Some(self.lex_punctuation(TokenKind::VerticalBar, 1))),
+            Some(b':') => Ok(Some(self.lex_punctuation(Punctuation::Colon))),
+            Some(b',') => Ok(Some(self.lex_punctuation(Punctuation::Comma))),
+            Some(b'(') => Ok(Some(self.lex_punctuation(Punctuation::LParen))),
+            Some(b')') => Ok(Some(self.lex_punctuation(Punctuation::RParen))),
+            Some(b'}') => Ok(Some(self.lex_punctuation(Punctuation::RBrace))),
+            Some(b'[') => Ok(Some(self.lex_punctuation(Punctuation::LSquare))),
+            Some(b']') => Ok(Some(self.lex_punctuation(Punctuation::RSquare))),
+            Some(b'<') => Ok(Some(self.lex_punctuation(Punctuation::Less))),
+            Some(b'>') => Ok(Some(self.lex_punctuation(Punctuation::Greater))),
+            Some(b'=') => Ok(Some(self.lex_punctuation(Punctuation::Equal))),
+            Some(b'+') => Ok(Some(self.lex_punctuation(Punctuation::Plus))),
+            Some(b'*') => Ok(Some(self.lex_punctuation(Punctuation::Star))),
+            Some(b'?') => Ok(Some(self.lex_punctuation(Punctuation::Question))),
+            Some(b'|') => Ok(Some(self.lex_punctuation(Punctuation::VerticalBar))),
             Some(b'.') => {
                 if self
                     .source
@@ -347,7 +413,7 @@ impl<'src> Lexer<'src> {
                     == Some(b"..")
                 {
                     // Lexing: ...
-                    Ok(Some(self.lex_punctuation(TokenKind::Ellipsis, 3)))
+                    Ok(Some(self.lex_punctuation(Punctuation::Ellipsis)))
                 } else {
                     Err(LexerError::MalformedEllipsis(self.next_position))
                 }
@@ -355,10 +421,10 @@ impl<'src> Lexer<'src> {
             Some(b'-') => {
                 if self.source.get(self.next_position + 1) == Some(&b'>') {
                     // Lexing: ->
-                    Ok(Some(self.lex_punctuation(TokenKind::Arrow, 2)))
+                    Ok(Some(self.lex_punctuation(Punctuation::Arrow)))
                 } else {
                     // Lexing: -
-                    Ok(Some(self.lex_punctuation(TokenKind::Minus, 1)))
+                    Ok(Some(self.lex_punctuation(Punctuation::Minus)))
                 }
             }
             Some(b'{') => {
@@ -368,10 +434,10 @@ impl<'src> Lexer<'src> {
                     == Some(b"-#")
                 {
                     // Lexing: {-#
-                    Ok(Some(self.lex_punctuation(TokenKind::FileMetadataBegin, 3)))
+                    Ok(Some(self.lex_punctuation(Punctuation::FileMetadataBegin)))
                 } else {
                     // Lexing: {
-                    Ok(Some(self.lex_punctuation(TokenKind::LBrace, 1)))
+                    Ok(Some(self.lex_punctuation(Punctuation::LBrace)))
                 }
             }
             Some(b'#') => {
@@ -381,7 +447,7 @@ impl<'src> Lexer<'src> {
                     == Some(b"-}")
                 {
                     // Lexing: #-}
-                    Ok(Some(self.lex_punctuation(TokenKind::FileMetadataEnd, 3)))
+                    Ok(Some(self.lex_punctuation(Punctuation::FileMetadataEnd)))
                 } else {
                     // Lexing: hash-ident
                     self.lex_prefixed_identifier(TokenKind::HashIdentifier)
@@ -401,19 +467,36 @@ impl<'src> Lexer<'src> {
             Some(b'"') => self.lex_string_literal().map(Some),
             Some(c) if c.is_ascii_digit() => self.lex_number().map(Some),
             Some(c) if c == b'_' || c.is_ascii_alphabetic() => Ok(Some(self.lex_bare_identifier())),
-            Some(_) => Err(LexerError::Unexpected(self.next_position)),
+            Some(c) => Err(LexerError::Unexpected(c, self.next_position)),
             None => Ok(None),
         }
     }
 
+    pub fn lex(&mut self) -> LexerResult<Option<Token>> {
+        self.peek_cache_position = self.next_position;
+        let next_token = self.lex_next();
+        std::mem::replace(&mut self.peek_cache, next_token)
+    }
+
+    /// Start position of the peekable token in the source text.
+    pub fn position(&self) -> usize {
+        self.peek_cache_position
+    }
+
     pub fn resume_at(&mut self, position: usize) {
         self.next_position = position;
+        self.peek_cache_position = position;
+        self.peek_cache = self.lex_next();
+    }
+
+    pub fn peek(&self) -> LexerResult<Option<Token>> {
+        self.peek_cache
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Lexer, LexerError, Token, TokenKind};
+    use super::{Lexer, LexerError, Punctuation, Token, TokenKind};
 
     struct LexerIter<'src>(Lexer<'src>);
 
@@ -589,7 +672,7 @@ mod tests {
         let lexer = Lexer::new(b"(a + %b) - c");
         let expected = [
             Token {
-                kind: TokenKind::LParen,
+                kind: TokenKind::Punctuation(Punctuation::LParen),
                 span: (0, 1).into(),
             },
             Token {
@@ -597,7 +680,7 @@ mod tests {
                 span: (1, 2).into(),
             },
             Token {
-                kind: TokenKind::Plus,
+                kind: TokenKind::Punctuation(Punctuation::Plus),
                 span: (3, 4).into(),
             },
             Token {
@@ -605,11 +688,11 @@ mod tests {
                 span: (5, 7).into(),
             },
             Token {
-                kind: TokenKind::RParen,
+                kind: TokenKind::Punctuation(Punctuation::RParen),
                 span: (7, 8).into(),
             },
             Token {
-                kind: TokenKind::Minus,
+                kind: TokenKind::Punctuation(Punctuation::Minus),
                 span: (9, 10).into(),
             },
             Token {

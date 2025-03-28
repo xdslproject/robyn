@@ -101,7 +101,7 @@ impl Context for GcContext {
 
     fn module_program<'ctx>(&'ctx self) -> GcProgram {
         GcProgram {
-            op: ModuleOp::create::<GcContext>(&GcRewriter { ctx: self.clone() }),
+            op: ModuleOp::create::<GcContext>(&GcRewriter { ctx: self.clone() }, &[]),
         }
     }
 

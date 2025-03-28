@@ -6,8 +6,16 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::ir::{
-    Accessor, Context, Operation, PatternResult, RewritePattern, Rewriter, SingleUseRewritePattern,
+use lexer::{Lexer, LexerError, LexicalSpan, Punctuation, Token, TokenKind};
+use thiserror::Error;
+
+use crate::{
+    dialect::builtin::ModuleOp,
+    ir::{
+        Accessor, Context, Operation, PatternResult, RewritePattern, Rewriter,
+        SingleUseRewritePattern,
+    },
+    utils::u8_to_ascii_or_value,
 };
 
 mod lexer;
@@ -21,7 +29,7 @@ impl<'src, C: Context> SingleUseRewritePattern<C> for SourceFileParserPattern<'s
         let root_op = accessor.get_root().opaque();
         let rewriter = accessor.rewrite();
 
-        match ParserEngine::<'_, '_, 'src, C>::new(self.stream, &rewriter).parse_source_file() {
+        match Parser::<'_, '_, 'src, C>::new(self.stream, &rewriter).parse_source_file() {
             Ok(op) => {
                 rewriter.replace_op(root_op, op);
                 PatternResult::Success
@@ -31,36 +39,70 @@ impl<'src, C: Context> SingleUseRewritePattern<C> for SourceFileParserPattern<'s
     }
 }
 
-pub type ParseResult<T> = Result<T, ParseError>;
-
-pub struct ParseError {}
-
-/// Central utility to parse MLIR source code.
-pub struct ParserEngine<'rewriter, 'parsing, 'src, C: 'parsing + Context> {
-    stream: &'src [u8],
-
-    rewriter: &'rewriter C::Rewriter<'parsing>,
-    _phantom: PhantomData<&'src ()>,
-}
-
-pub enum ParserDelimiter {
+pub enum ListDelimiter {
     None,
     Paren,
     Square,
-    Curly,
+    Brace,
     Angle,
 }
 
-impl<'rewriter, 'parsing, 'src, C: Context> ParserEngine<'rewriter, 'parsing, 'src, C> {
-    pub fn new(stream: &'src [u8], rewriter: &'rewriter C::Rewriter<'parsing>) -> Self {
+pub type ParseResult<T> = Result<T, ParserDiagnostic>;
+
+pub struct ParserDiagnostic {
+    pub msg: String,
+    pub position: usize,
+}
+
+impl From<LexerError> for ParserDiagnostic {
+    fn from(value: LexerError) -> Self {
+        match value {
+            LexerError::Unexpected(c, pos) => ParserDiagnostic {
+                msg: format!("unexpected character '{}'", u8_to_ascii_or_value(c)),
+                position: pos,
+            },
+            LexerError::MalformedEllipsis(pos) => ParserDiagnostic {
+                msg: "unexpected character '.' (malformed ellipsis?)".to_string(),
+                position: pos,
+            },
+            LexerError::ExpectedSuffixIdentifier(pos) => ParserDiagnostic {
+                msg: "expected suffix identifier character".to_string(),
+                position: pos,
+            },
+            LexerError::UnclosedStringLiteralAt(pos) => ParserDiagnostic {
+                msg: "string literal is never closed".to_string(),
+                position: pos,
+            },
+            LexerError::MalformedFloatExponent(pos) => ParserDiagnostic {
+                msg: "malformed float exponent (expected digits)".to_string(),
+                position: pos,
+            },
+        }
+    }
+}
+
+/// Central utility to parse MLIR source code.
+pub struct Parser<'rewriter, 'parsing, 'src, C: 'parsing + Context> {
+    source: &'src [u8],
+    lexer: Lexer<'src>,
+
+    rewriter: &'rewriter C::Rewriter<'parsing>,
+}
+
+impl<'rewriter, 'parsing, 'src, C: Context> Parser<'rewriter, 'parsing, 'src, C> {
+    pub fn new(source: &'src [u8], rewriter: &'rewriter C::Rewriter<'parsing>) -> Self {
         Self {
-            stream,
+            source,
+            lexer: Lexer::new(source),
             rewriter,
-            _phantom: PhantomData,
         }
     }
 
-    pub fn parse_opt_keyword(&mut self, keyword: &'static [u8]) -> ParseResult<Option<()>> {
+    pub fn register_ssa_value() {
+        
+    }
+
+    pub fn parse_opt_keyword(&mut self, keyword: impl AsRef<[u8]>) -> ParseResult<Option<()>> {
         todo!()
     }
 
@@ -74,12 +116,106 @@ impl<'rewriter, 'parsing, 'src, C: Context> ParserEngine<'rewriter, 'parsing, 's
     /// returns a builtin.module containing the top level operations of the
     /// source file, if any.
     pub fn parse_source_file(&mut self) -> ParseResult<C::OpaqueOperation<'parsing>> {
-        todo!()
+        let mut operations = Vec::new();
+        while let Some(op) = self.parse_opt_operation()? {
+            operations.push(op);
+        }
+
+        if operations.len() == 1 {
+            Ok(operations.pop().unwrap())
+        } else {
+            Ok(ModuleOp::create::<C>(self.rewriter, &operations))
+        }
     }
 
     /// Parses a single operation.
     pub fn parse_opt_operation(&mut self) -> ParseResult<Option<C::OpaqueOperation<'parsing>>> {
+        let tok = self.lexer.lex()?;
+        if tok.is_none() {
+            return Ok(None);
+        }
+
         todo!()
+    }
+
+    /// Parses a list of result values, potentially none.
+    /// For each result value, returns the span of the %-identifier and the
+    /// size of the value.
+    fn parse_result_list(&mut self) -> ParseResult<Vec<(LexicalSpan, usize)>> {
+        todo!()
+    }
+
+    pub fn parse_comma_separated_list<T>(
+        &mut self,
+        delimiter: ListDelimiter,
+        parser: impl Fn(&mut Self) -> ParseResult<T>,
+    ) -> ParseResult<Vec<T>> {
+        self.parse_separated_list(delimiter, parser, Punctuation::Comma)
+    }
+
+    pub fn parse_separated_list<T>(
+        &mut self,
+        delimiter: ListDelimiter,
+        parser: impl Fn(&mut Self) -> ParseResult<T>,
+        separator: Punctuation,
+    ) -> ParseResult<Vec<T>> {
+        let parse_left_delimiter = |parser: &mut Self| match delimiter {
+            ListDelimiter::None => Ok(()),
+            ListDelimiter::Paren => parser.parse_punctuation(Punctuation::LParen),
+            ListDelimiter::Square => parser.parse_punctuation(Punctuation::LSquare),
+            ListDelimiter::Brace => parser.parse_punctuation(Punctuation::LBrace),
+            ListDelimiter::Angle => parser.parse_punctuation(Punctuation::Less),
+        };
+
+        let parse_right_delimiter = |parser: &mut Self| match delimiter {
+            ListDelimiter::None => Ok(()),
+            ListDelimiter::Paren => parser.parse_punctuation(Punctuation::RParen),
+            ListDelimiter::Square => parser.parse_punctuation(Punctuation::RSquare),
+            ListDelimiter::Brace => parser.parse_punctuation(Punctuation::RBrace),
+            ListDelimiter::Angle => parser.parse_punctuation(Punctuation::Greater),
+        };
+
+        let parse_opt_right_delimiter = |parser: &mut Self| match delimiter {
+            ListDelimiter::None => Ok(None),
+            ListDelimiter::Paren => parser.parse_opt_punctuation(Punctuation::RParen),
+            ListDelimiter::Square => parser.parse_opt_punctuation(Punctuation::RSquare),
+            ListDelimiter::Brace => parser.parse_opt_punctuation(Punctuation::RBrace),
+            ListDelimiter::Angle => parser.parse_opt_punctuation(Punctuation::Greater),
+        };
+
+        let mut result = Vec::new();
+
+        parse_left_delimiter(self)?;
+        if parse_opt_right_delimiter(self)?.is_some() {
+            return Ok(result);
+        }
+
+
+        result.push(parser(self)?);
+        while self.parse_opt_punctuation(separator)?.is_some() {
+            result.push(parser(self)?);
+        }
+
+        parse_right_delimiter(self)?;
+        Ok(result)
+    }
+
+    pub fn parse_punctuation(&mut self, punctuation: Punctuation) -> ParseResult<()> {
+        self.parse_opt_punctuation(punctuation).and_then(|x| {
+            x.ok_or_else(|| self.diagnostic_here(format!("expected '{}'", punctuation.as_str())))
+        })
+    }
+
+    pub fn parse_opt_punctuation(&mut self, punctuation: Punctuation) -> ParseResult<Option<()>> {
+        self.parse_opt_single_token(TokenKind::Punctuation(punctuation))
+            .map(|x| x.map(drop))
+    }
+
+    fn parse_opt_single_token(&mut self, expected_kind: TokenKind) -> ParseResult<Option<Token>> {
+        match self.lexer.peek()? {
+            Some(Token { kind, .. }) if kind == expected_kind => Ok(self.lexer.lex()?),
+            _ => Ok(None),
+        }
     }
 
     /// Parses a sequence of elements accepted by the provided parser, until None or an error is returned.
@@ -92,5 +228,12 @@ impl<'rewriter, 'parsing, 'src, C: Context> ParserEngine<'rewriter, 'parsing, 's
             result.push(x);
         }
         ParseResult::Ok(result)
+    }
+
+    pub fn diagnostic_here(&self, msg: String) -> ParserDiagnostic {
+        ParserDiagnostic {
+            msg,
+            position: self.lexer.position(),
+        }
     }
 }

@@ -15,7 +15,7 @@ impl<C: Context> RewritePattern<C> for FooPattern {
         drop(op);
 
         let rewriter = accessor.rewrite();
-        let new_op = ModuleOp::create::<C>(&rewriter);
+        let new_op = ModuleOp::create::<C>(&rewriter, &[]);
         rewriter.insert_op_at_start(new_op, to_insert_into);
 
         PatternResult::Success

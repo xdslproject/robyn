@@ -38,8 +38,9 @@ impl OperationKind for ModuleOp {
 impl ModuleOp {
     pub fn create<'rewrite, C: Context>(
         rewriter: &C::Rewriter<'rewrite>,
+        content: &[C::OpaqueOperation<'rewrite>],
     ) -> C::OpaqueOperation<'rewrite> {
-        let module_block = rewriter.create_block(&[], &[]);
+        let module_block = rewriter.create_block(&[], content);
         let module_region = rewriter.create_region(&[module_block]);
         rewriter.create_op::<ModuleOp>(&[], &[], &[], &[], &[module_region])
     }

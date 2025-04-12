@@ -6,8 +6,11 @@ pub trait Dialect {
     fn register(ctx: &mut impl Context);
 }
 
+pub trait OpAdaptor<'rewrite, C: Context + 'rewrite>: Into<C::OpaqueOperation<'rewrite>> {}
+
 pub trait OperationKind: 'static {
     type Dialect: Dialect;
+    type Adaptor<'rewrite, C: Context + 'rewrite>: OpAdaptor<'rewrite, C>;
 
     type Access<'rewrite, 'a, C>: OperationKindAccess<'rewrite, 'a, C, Self>
         + AsRef<C::Operation<'rewrite, 'a>>
@@ -65,8 +68,9 @@ pub trait AttributeKindAccess<'rewrite, 'a, C: Context, A: AttributeKind + ?Size
 }
 
 macro_rules! declare_operation {
-    ($name:ident, $access:ident, $opaque:ident) => {
+    ($name:ident, $adaptor:ident, $access:ident, $opaque:ident) => {
         pub struct $name;
+        pub struct $adaptor<'rewrite, C: 'rewrite + Context>();
         pub struct $access<'rewrite, 'a, C: 'rewrite + Context>(C::Operation<'rewrite, 'a>);
         pub struct $opaque<'rewrite, C: 'rewrite + Context>(C::OpaqueOperation<'rewrite>);
 
@@ -95,11 +99,19 @@ macro_rules! declare_operation {
 }
 
 macro_rules! operation_defaults {
-    ($dialect:ident, $access:ident, $opaque:ident) => {
+    ($dialect:ident, $adaptor:ident, $access:ident, $opaque:ident) => {
         type Dialect = $dialect;
 
-        type Access<'rewrite, 'a, C> = $access<'rewrite, 'a, C> where C: 'rewrite + Context;
-        type Opaque<'rewrite, C> = $opaque<'rewrite, C> where C: 'rewrite + Context;
+        type Adaptor = $adaptor;
+
+        type Access<'rewrite, 'a, C>
+            = $access<'rewrite, 'a, C>
+        where
+            C: 'rewrite + Context;
+        type Opaque<'rewrite, C>
+            = $opaque<'rewrite, C>
+        where
+            C: 'rewrite + Context;
 
         fn access<'rewrite, 'a, C: Context>(
             op: C::Operation<'rewrite, 'a>,
@@ -144,8 +156,14 @@ macro_rules! attr_defaults {
     ($dialect:ident, $access:ident, $opaque:ident) => {
         type Dialect = $dialect;
 
-        type Access<'rewrite, 'a, C> = $access<'rewrite, 'a, C> where C: 'rewrite + Context;
-        type Opaque<'rewrite, C> = $opaque<'rewrite, C> where C: 'rewrite + Context;
+        type Access<'rewrite, 'a, C>
+            = $access<'rewrite, 'a, C>
+        where
+            C: 'rewrite + Context;
+        type Opaque<'rewrite, C>
+            = $opaque<'rewrite, C>
+        where
+            C: 'rewrite + Context;
 
         fn access<'rewrite, 'a, C: Context>(
             attr: C::Attribute<'rewrite, 'a>,

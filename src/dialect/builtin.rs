@@ -25,10 +25,10 @@ impl Dialect for BuiltinDialect {
 // ModuleOp
 //============================================================================//
 
-declare_operation!(ModuleOp, ModuleOpAdaptor, ModuleOpAccess, ModuleOpOpaque);
+declare_operation!(ModuleOp, ModuleOpAccess, ModuleOpOpaque);
 
 impl OperationKind for ModuleOp {
-    operation_defaults!(BuiltinDialect, ModuleOpAdaptor, ModuleOpAccess, ModuleOpOpaque);
+    operation_defaults!(BuiltinDialect, ModuleOpAccess, ModuleOpOpaque);
 
     fn valid_access<'rewrite, 'a, C: Context>(op: C::Operation<'rewrite, 'a>) -> bool {
         op.isa::<ModuleOp>() && op.get_region(0).and_then(|r| r.get_block(0)).is_some()

@@ -1,7 +1,10 @@
 [package]
-name = "merlen"
-version = "0.1.0"
+name = "robyn"
+version = "0.1.0-alpha"
+description = "A Rust MLIR sidekick"
 edition = "2021"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/xdslproject/robyn"
 
 [features]
 default = ["gc"]

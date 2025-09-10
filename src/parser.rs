@@ -1,20 +1,9 @@
-use std::{
-    arch::x86_64,
-    borrow::Borrow,
-    io::Read,
-    marker::PhantomData,
-    ops::{Deref, DerefMut},
-};
 
 use lexer::{Lexer, LexerError, LexicalSpan, Punctuation, Token, TokenKind};
-use thiserror::Error;
 
 use crate::{
     dialect::builtin::ModuleOp,
-    ir::{
-        Accessor, Context, Operation, PatternResult, RewritePattern, Rewriter,
-        SingleUseRewritePattern,
-    },
+    ir::{Accessor, Context, Operation, PatternResult, Rewriter, SingleUseRewritePattern},
     utils::u8_to_ascii_or_value,
 };
 
@@ -98,9 +87,7 @@ impl<'rewriter, 'parsing, 'src, C: Context> Parser<'rewriter, 'parsing, 'src, C>
         }
     }
 
-    pub fn register_ssa_value() {
-        
-    }
+    pub fn register_ssa_value() {}
 
     pub fn parse_opt_keyword(&mut self, keyword: impl AsRef<[u8]>) -> ParseResult<Option<()>> {
         todo!()
@@ -190,7 +177,6 @@ impl<'rewriter, 'parsing, 'src, C: Context> Parser<'rewriter, 'parsing, 'src, C>
             return Ok(result);
         }
 
-
         result.push(parser(self)?);
         while self.parse_opt_punctuation(separator)?.is_some() {
             result.push(parser(self)?);
@@ -201,9 +187,8 @@ impl<'rewriter, 'parsing, 'src, C: Context> Parser<'rewriter, 'parsing, 'src, C>
     }
 
     pub fn parse_punctuation(&mut self, punctuation: Punctuation) -> ParseResult<()> {
-        self.parse_opt_punctuation(punctuation).and_then(|x| {
-            x.ok_or_else(|| self.diagnostic_here(format!("expected '{}'", punctuation.as_str())))
-        })
+        self.parse_opt_punctuation(punctuation)
+            .and_then(|x| x.ok_or_else(|| self.diagnostic_here(format!("expected '{}'", punctuation.as_str()))))
     }
 
     pub fn parse_opt_punctuation(&mut self, punctuation: Punctuation) -> ParseResult<Option<()>> {
@@ -219,10 +204,7 @@ impl<'rewriter, 'parsing, 'src, C: Context> Parser<'rewriter, 'parsing, 'src, C>
     }
 
     /// Parses a sequence of elements accepted by the provided parser, until None or an error is returned.
-    pub fn parse_many<T>(
-        &mut self,
-        f: impl Fn(&mut Self) -> ParseResult<Option<T>>,
-    ) -> ParseResult<Vec<T>> {
+    pub fn parse_many<T>(&mut self, f: impl Fn(&mut Self) -> ParseResult<Option<T>>) -> ParseResult<Vec<T>> {
         let mut result = Vec::new();
         while let Some(x) = f(self)? {
             result.push(x);

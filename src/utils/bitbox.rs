@@ -3,7 +3,7 @@ use std::mem::size_of;
 use thiserror::Error;
 
 /// Amount of bits from which data should be stored offline (inclusive), in bits.
-const BITBOX_OFFLINE_THRESHOLD: usize = size_of::<usize>() * 8;
+const BITBOX_OFFLINE_THRESHOLD: usize = usize::BITS as usize;
 
 #[cfg_attr(feature = "gc", derive(dumpster::Collectable))]
 #[derive(PartialEq, Eq, Debug)]
@@ -63,12 +63,7 @@ impl BitBox {
             len: bytes.len() * 8,
             data: match bytes.len() <= BITBOX_OFFLINE_THRESHOLD / 8 {
                 true => Inline(bytes_to_usize(bytes)),
-                false => Offline(
-                    bytes
-                        .chunks(size_of::<usize>())
-                        .map(bytes_to_usize)
-                        .collect(),
-                ),
+                false => Offline(bytes.chunks(size_of::<usize>()).map(bytes_to_usize).collect()),
             },
         })
     }
@@ -76,19 +71,13 @@ impl BitBox {
     pub fn get(&self, id: usize) -> Option<bool> {
         #[inline(always)]
         fn get_bit(data: usize, id: usize) -> bool {
-            eprintln!(
-                "data: {data:x}, id: {id}, res: {}",
-                data.to_le() & (1 << id)
-            );
+            eprintln!("data: {data:x}, id: {id}, res: {}", data.to_le() & (1 << id));
             data.to_le() & (1 << id) != 0
         }
 
         (id < self.len).then(|| match &self.data {
             Inline(data) => get_bit(*data, id),
-            Offline(data) => get_bit(
-                data[id / (size_of::<usize>() * 8)],
-                id % (size_of::<usize>() * 8),
-            ),
+            Offline(data) => get_bit(data[id / usize::BITS as usize], id % usize::BITS as usize),
         })
     }
 
@@ -108,12 +97,12 @@ impl BitBox {
     pub fn len(&self) -> usize {
         self.len
     }
+    
+    pub fn is_empty(&self) -> bool { self.len == 0 }
 
     pub fn as_bytes(&self) -> Option<&[u8]> {
         (self.len % 8 == 0).then(|| match &self.data {
-            Inline(data) => {
-                &bytemuck::must_cast_ref::<usize, [u8; size_of::<usize>()]>(data)[..(self.len / 8)]
-            }
+            Inline(data) => &bytemuck::must_cast_ref::<usize, [u8; size_of::<usize>()]>(data)[..(self.len / 8)],
             Offline(data) => &bytemuck::must_cast_slice::<usize, u8>(data)[..(self.len / 8)],
         })
     }
@@ -139,12 +128,7 @@ mod tests {
         assert_eq!(BitBox::from_bytes(&[]), Ok(BitBox::empty()));
     }
 
-    fn bytes(
-        bytes: &[u8],
-        bit_tests: &[(usize, Option<bool>)],
-        byte_tests: &[(usize, Option<u8>)],
-        is_inline: bool,
-    ) {
+    fn bytes(bytes: &[u8], bit_tests: &[(usize, Option<bool>)], byte_tests: &[(usize, Option<u8>)], is_inline: bool) {
         let bbox: BitBox = BitBox::from_bytes(bytes).unwrap();
         assert_eq!(bbox.len(), bytes.len() * 8);
         assert_eq!(bbox.as_bytes(), Some(bytes));

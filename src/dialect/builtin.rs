@@ -1,14 +1,11 @@
 use crate::{
-    ir::{
-        AttrData, Attribute, AttributeData, Context, OpaqueAttributeData, Operation, Region,
-        Rewriter,
-    },
+    ir::{AttrData, Attribute, AttributeData, Context, OpaqueAttributeData, Operation, Region, Rewriter},
     utils::bitbox::{BitBox, TooManyBytesError},
 };
 
 use super::{
-    attr_defaults, declare_attr, declare_operation, operation_defaults, AttributeKind, Dialect,
-    OperationKind, OperationKindAccess,
+    attr_defaults, declare_attr, declare_operation, operation_defaults, AttributeKind, Dialect, OperationKind,
+    OperationKindAccess,
 };
 use crate::dialect::AttributeKindAccess;
 pub struct BuiltinDialect;
@@ -30,7 +27,7 @@ declare_operation!(ModuleOp, ModuleOpAccess, ModuleOpOpaque);
 impl OperationKind for ModuleOp {
     operation_defaults!(BuiltinDialect, ModuleOpAccess, ModuleOpOpaque);
 
-    fn valid_access<'rewrite, 'a, C: Context>(op: C::Operation<'rewrite, 'a>) -> bool {
+    fn valid_access<C: Context>(op: C::Operation<'_, '_>) -> bool {
         op.isa::<ModuleOp>() && op.get_region(0).and_then(|r| r.get_block(0)).is_some()
     }
 }
@@ -65,7 +62,7 @@ declare_attr!(StringAttr, StringAttrAccess, StringAttrOpaque);
 impl AttributeKind for StringAttr {
     attr_defaults!(BuiltinDialect, StringAttrAccess, StringAttrOpaque);
 
-    fn valid_access<'rewrite, 'a, C: Context>(attr: C::Attribute<'rewrite, 'a>) -> bool {
+    fn valid_access<C: Context>(attr: C::Attribute<'_, '_>) -> bool {
         attr.isa::<StringAttr>()
             && match attr.data() {
                 AttributeData::Bits(bits) => bits.len() % 8 == 0,
@@ -79,13 +76,12 @@ impl StringAttr {
         rewriter: &C::Rewriter<'rewrite>,
         data: &[u8],
     ) -> Result<C::OpaqueAttr<'rewrite>, TooManyBytesError> {
-        Ok(rewriter
-            .create_attribute::<StringAttr>(OpaqueAttributeData::Bits(BitBox::from_bytes(data)?)))
+        Ok(rewriter.create_attribute::<StringAttr>(OpaqueAttributeData::Bits(BitBox::from_bytes(data)?)))
     }
 }
 
-impl<'rewrite, 'a, C: Context + 'a> StringAttrAccess<'rewrite, 'a, C> {
-    pub fn as_bytes<'data>(&'data self) -> impl AttrData<'data, [u8]> {
+impl<'a, C: Context + 'a> StringAttrAccess<'_, 'a, C> {
+    pub fn as_bytes(&self) -> impl AttrData<'_, [u8]> {
         let AttributeData::Bits(bits) = self.as_ref().data() else {
             unreachable!("verified")
         };

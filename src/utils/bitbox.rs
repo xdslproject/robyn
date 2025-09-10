@@ -97,6 +97,8 @@ impl BitBox {
     pub fn len(&self) -> usize {
         self.len
     }
+    
+    pub fn is_empty(&self) -> bool { self.len == 0 }
 
     pub fn as_bytes(&self) -> Option<&[u8]> {
         (self.len % 8 == 0).then(|| match &self.data {

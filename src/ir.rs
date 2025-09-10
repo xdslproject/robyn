@@ -171,33 +171,17 @@ pub trait Rewriter<'rewrite, C: Context> {
 
     /// Inserts an operation in the same block of an other operation,
     /// before it. The other operation must already be inserted in a block.
-    fn insert_op_before(
-        &self,
-        op: C::OpaqueOperation<'rewrite>,
-        other: C::OpaqueOperation<'rewrite>,
-    );
+    fn insert_op_before(&self, op: C::OpaqueOperation<'rewrite>, other: C::OpaqueOperation<'rewrite>);
 
     /// Inserts an operation in the same block of an other operation,
     /// after it. The other operation must already be inserted in a block.
-    fn insert_op_after(
-        &self,
-        op: C::OpaqueOperation<'rewrite>,
-        other: C::OpaqueOperation<'rewrite>,
-    );
+    fn insert_op_after(&self, op: C::OpaqueOperation<'rewrite>, other: C::OpaqueOperation<'rewrite>);
 
     /// Inserts an operation at the start of a block.
-    fn insert_op_at_start(
-        &self,
-        op: C::OpaqueOperation<'rewrite>,
-        at_start_of: C::OpaqueBlock<'rewrite>,
-    );
+    fn insert_op_at_start(&self, op: C::OpaqueOperation<'rewrite>, at_start_of: C::OpaqueBlock<'rewrite>);
 
     /// Inserts an operation at the end of a block.
-    fn insert_op_at_end(
-        &self,
-        op: C::OpaqueOperation<'rewrite>,
-        at_end_of: C::OpaqueBlock<'rewrite>,
-    );
+    fn insert_op_at_end(&self, op: C::OpaqueOperation<'rewrite>, at_end_of: C::OpaqueBlock<'rewrite>);
 
     /// Creates a free standing operation.
     fn create_op<O: OperationKind>(
@@ -224,12 +208,7 @@ pub trait Rewriter<'rewrite, C: Context> {
     fn create_region(&self, blocks: &[C::OpaqueBlock<'rewrite>]) -> C::OpaqueRegion<'rewrite>;
 
     /// Inserts or replace an attribute in the operation's dictionary.
-    fn set_attribute(
-        &self,
-        op: C::OpaqueOperation<'rewrite>,
-        attr_name: &str,
-        attr: C::OpaqueAttr<'rewrite>,
-    );
+    fn set_attribute(&self, op: C::OpaqueOperation<'rewrite>, attr_name: &str, attr: C::OpaqueAttr<'rewrite>);
 
     /// Sets an existing operand of an operation to be a specific value.
     fn set_operand(

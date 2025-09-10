@@ -1,14 +1,11 @@
 use crate::{
-    ir::{
-        AttrData, Attribute, AttributeData, Context, OpaqueAttributeData, Operation, Region,
-        Rewriter,
-    },
+    ir::{AttrData, Attribute, AttributeData, Context, OpaqueAttributeData, Operation, Region, Rewriter},
     utils::bitbox::{BitBox, TooManyBytesError},
 };
 
 use super::{
-    attr_defaults, declare_attr, declare_operation, operation_defaults, AttributeKind, Dialect,
-    OperationKind, OperationKindAccess,
+    attr_defaults, declare_attr, declare_operation, operation_defaults, AttributeKind, Dialect, OperationKind,
+    OperationKindAccess,
 };
 use crate::dialect::AttributeKindAccess;
 pub struct BuiltinDialect;
@@ -79,8 +76,7 @@ impl StringAttr {
         rewriter: &C::Rewriter<'rewrite>,
         data: &[u8],
     ) -> Result<C::OpaqueAttr<'rewrite>, TooManyBytesError> {
-        Ok(rewriter
-            .create_attribute::<StringAttr>(OpaqueAttributeData::Bits(BitBox::from_bytes(data)?)))
+        Ok(rewriter.create_attribute::<StringAttr>(OpaqueAttributeData::Bits(BitBox::from_bytes(data)?)))
     }
 }
 

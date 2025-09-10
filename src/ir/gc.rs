@@ -17,15 +17,15 @@ use crate::{
         AttributeKind, Dialect, OperationKind,
     },
     ir::{
-        Accessor, Attribute, Block, Context, OpaqueAttr, OpaqueOperation, OperandPosition,
-        Operation, Region, RewritePattern, Rewriter, Value, ValueOwner,
+        Accessor, Attribute, Block, Context, OpaqueAttr, OpaqueOperation, OperandPosition, Operation, Region,
+        RewritePattern, Rewriter, Value, ValueOwner,
     },
     utils::bitbox::BitBox,
 };
 
 use super::{
-    AttrData, AttributeData, BlockPosition, Diagnostic, DictionaryData, OpaqueAttributeData,
-    PatternResult, SingleUseRewritePattern,
+    AttrData, AttributeData, BlockPosition, Diagnostic, DictionaryData, OpaqueAttributeData, PatternResult,
+    SingleUseRewritePattern,
 };
 
 // TODO: proper error handling instead of assert
@@ -72,7 +72,10 @@ impl Context for GcContext {
 
     type Program<'ctx> = GcProgram;
 
-    type AttrData<'data, T> = GcAttrData<'data, T> where T: ?Sized + 'data;
+    type AttrData<'data, T>
+        = GcAttrData<'data, T>
+    where
+        T: ?Sized + 'data;
     type DictionaryData<'rewrite, 'a> = HashMap<String, GcAttributeRef>;
 
     type OpaqueOperation<'rewrite> = GcOperationRef;
@@ -105,11 +108,7 @@ impl Context for GcContext {
         }
     }
 
-    fn apply_pattern<'ctx, P: RewritePattern<Self>>(
-        &'ctx self,
-        program: &mut GcProgram,
-        pattern: &P,
-    ) -> PatternResult {
+    fn apply_pattern<'ctx, P: RewritePattern<Self>>(&'ctx self, program: &mut GcProgram, pattern: &P) -> PatternResult {
         pattern.match_and_rewrite(GcAccessor {
             ctx: self.clone(),
             root: program.op.clone(),
@@ -196,11 +195,7 @@ impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
         GcRewriter { ctx: self.ctx }
     }
 
-    fn apply_pattern<P: RewritePattern<GcContext>>(
-        &mut self,
-        pattern: &P,
-        operation: GcOperationRef,
-    ) -> PatternResult {
+    fn apply_pattern<P: RewritePattern<GcContext>>(&mut self, pattern: &P, operation: GcOperationRef) -> PatternResult {
         pattern.match_and_rewrite(Self {
             ctx: self.ctx.clone(),
             root: operation,
@@ -238,16 +233,14 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
     fn get_placeholder_value(&self, r#type: GcAttributeRef) -> GcValueRef {
         GcValueRef::new(GcValue {
             valid: true,
-            r#type: r#type,
+            r#type,
             owner: ValueOwner::Placeholder,
             uses: HashSet::new(),
         })
     }
 
     fn get_string_attr(&self, data: &[u8]) -> GcAttributeRef {
-        self.create_attribute::<StringAttr>(OpaqueAttributeData::Bits(
-            BitBox::from_bytes(data).expect("TODO"),
-        ))
+        self.create_attribute::<StringAttr>(OpaqueAttributeData::Bits(BitBox::from_bytes(data).expect("TODO")))
     }
 
     fn replace_op(&self, op: GcOperationRef, with: GcOperationRef) {
@@ -356,10 +349,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
                     })
                 })
                 .collect(),
-            attributes: attributes
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect(),
+            attributes: attributes.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
             successors: successors.into(),
             regions: regions.into(),
         });
@@ -388,20 +378,14 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
             data: match data {
                 OpaqueAttributeData::Bits(bits) => GcAttributeData::Bits(bits),
                 OpaqueAttributeData::Array(array) => GcAttributeData::Array(array.to_owned()),
-                OpaqueAttributeData::Dictionary(dict) => GcAttributeData::Dictionary(
-                    dict.iter()
-                        .map(|(k, v)| (k.to_string(), v.clone()))
-                        .collect(),
-                ),
+                OpaqueAttributeData::Dictionary(dict) => {
+                    GcAttributeData::Dictionary(dict.iter().map(|(k, v)| (k.to_string(), v.clone())).collect())
+                }
             },
         })
     }
 
-    fn create_block(
-        &self,
-        arguments: &[GcAttributeRef],
-        operations: &[GcOperationRef],
-    ) -> GcBlockRef {
+    fn create_block(&self, arguments: &[GcAttributeRef], operations: &[GcOperationRef]) -> GcBlockRef {
         assert!(operations.iter().all(|x| x.valid()));
 
         if let Some(first) = operations.first() {
@@ -414,10 +398,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
 
         {
             use itertools::Itertools;
-            operations
-                .iter()
-                .tuple_windows()
-                .for_each(|(x, y)| link_ops(x, y));
+            operations.iter().tuple_windows().for_each(|(x, y)| link_ops(x, y));
         }
 
         let block = GcBlockRef::new(GcBlock {
@@ -465,32 +446,17 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         }
     }
 
-    fn set_operand(
-        &self,
-        op: GcOperationRef,
-        operand_pos: super::OperandPosition,
-        operand: GcValueRef,
-    ) {
+    fn set_operand(&self, op: GcOperationRef, operand_pos: super::OperandPosition, operand: GcValueRef) {
         assert!(op.get().operands.len() > operand_pos as usize);
         op.get_mut().operands[operand_pos as usize] = operand;
     }
 
-    fn set_successor(
-        &self,
-        op: GcOperationRef,
-        successor_pos: super::SuccessorPosition,
-        successor: GcBlockRef,
-    ) {
+    fn set_successor(&self, op: GcOperationRef, successor_pos: super::SuccessorPosition, successor: GcBlockRef) {
         assert!(op.get().successors.len() > successor_pos as usize);
         op.get_mut().successors[successor_pos as usize] = successor;
     }
 
-    fn set_region(
-        &self,
-        op: GcOperationRef,
-        region_pos: super::RegionPosition,
-        region: GcRegionRef,
-    ) {
+    fn set_region(&self, op: GcOperationRef, region_pos: super::RegionPosition, region: GcRegionRef) {
         assert!(op.get().regions.len() > region_pos as usize);
         op.get_mut().regions[region_pos as usize] = region;
     }
@@ -561,15 +527,7 @@ impl<'rewrite, 'a> Operation<'rewrite, 'a, GcContext> for GcOperationRef {
     }
 
     fn get_parent_op(&self) -> Option<GcOperationRef> {
-        self.get()
-            .parent
-            .as_ref()?
-            .get()
-            .parent
-            .as_ref()?
-            .get()
-            .parent
-            .clone()
+        self.get().parent.as_ref()?.get().parent.as_ref()?.get().parent.clone()
     }
 
     fn get_parent_region(&self) -> Option<GcRegionRef> {
@@ -596,10 +554,7 @@ impl<'rewrite, 'a> Operation<'rewrite, 'a, GcContext> for GcOperationRef {
         self.get().regions.len()
     }
 
-    fn get_region(
-        &self,
-        region: super::RegionPosition,
-    ) -> Option<<GcContext as Context>::Region<'rewrite, 'a>> {
+    fn get_region(&self, region: super::RegionPosition) -> Option<<GcContext as Context>::Region<'rewrite, 'a>> {
         self.get().regions.get(region).cloned()
     }
 
@@ -607,10 +562,7 @@ impl<'rewrite, 'a> Operation<'rewrite, 'a, GcContext> for GcOperationRef {
         self.get().operands.len()
     }
 
-    fn get_operand(
-        &self,
-        operand: OperandPosition,
-    ) -> Option<<GcContext as Context>::Value<'rewrite, 'a>> {
+    fn get_operand(&self, operand: OperandPosition) -> Option<<GcContext as Context>::Value<'rewrite, 'a>> {
         self.get().operands.get(operand).cloned()
     }
 
@@ -618,10 +570,7 @@ impl<'rewrite, 'a> Operation<'rewrite, 'a, GcContext> for GcOperationRef {
         self.get().results.len()
     }
 
-    fn get_result(
-        &self,
-        result: super::ResultPosition,
-    ) -> Option<<GcContext as Context>::Value<'rewrite, 'a>> {
+    fn get_result(&self, result: super::ResultPosition) -> Option<<GcContext as Context>::Value<'rewrite, 'a>> {
         self.get().results.get(result).cloned()
     }
 
@@ -629,10 +578,7 @@ impl<'rewrite, 'a> Operation<'rewrite, 'a, GcContext> for GcOperationRef {
         self.get().successors.len()
     }
 
-    fn get_successor(
-        &self,
-        successor: super::RegionPosition,
-    ) -> Option<<GcContext as Context>::Block<'rewrite, 'a>> {
+    fn get_successor(&self, successor: super::RegionPosition) -> Option<<GcContext as Context>::Block<'rewrite, 'a>> {
         self.get().successors.get(successor).cloned()
     }
 }
@@ -711,15 +657,9 @@ impl<'rewrite, 'a> Attribute<'rewrite, 'a, GcContext> for GcAttributeRef {
         }
 
         match &self.get().data {
-            GcAttributeData::Bits(_) => {
-                AttributeData::Bits(GcAttrData(force_extract_bits(self.get())))
-            }
-            GcAttributeData::Array(_) => {
-                AttributeData::Array(GcAttrData(force_extract_array(self.get())))
-            }
-            GcAttributeData::Dictionary(_) => {
-                AttributeData::Dictionary(GcAttrData(force_extract_dict(self.get())))
-            }
+            GcAttributeData::Bits(_) => AttributeData::Bits(GcAttrData(force_extract_bits(self.get()))),
+            GcAttributeData::Array(_) => AttributeData::Array(GcAttrData(force_extract_array(self.get()))),
+            GcAttributeData::Dictionary(_) => AttributeData::Dictionary(GcAttrData(force_extract_dict(self.get()))),
         }
     }
 

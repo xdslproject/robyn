@@ -25,7 +25,7 @@ pub trait OperationKind: 'static {
 
     /// Returns true if the provided operation's structure is sufficiently valid
     /// to be accessed as this operation.
-    fn valid_access<'rewrite, 'a, C: Context>(attr: C::Operation<'rewrite, 'a>) -> bool;
+    fn valid_access<C: Context>(attr: C::Operation<'_, '_>) -> bool;
 }
 
 pub trait OperationKindAccess<'rewrite, 'a, C: Context, O: OperationKind + ?Sized> {
@@ -51,7 +51,7 @@ pub trait AttributeKind: 'static {
 
     /// Returns true if the provided attribute's structure is sufficiently valid
     /// to be accessed as this operation.
-    fn valid_access<'rewrite, 'a, C: Context>(attr: C::Attribute<'rewrite, 'a>) -> bool;
+    fn valid_access<C: Context>(attr: C::Attribute<'_, '_>) -> bool;
 }
 
 pub trait AttributeKindAccess<'rewrite, 'a, C: Context, A: AttributeKind + ?Sized> {

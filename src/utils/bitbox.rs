@@ -3,7 +3,7 @@ use std::mem::size_of;
 use thiserror::Error;
 
 /// Amount of bits from which data should be stored offline (inclusive), in bits.
-const BITBOX_OFFLINE_THRESHOLD: usize = size_of::<usize>() * 8;
+const BITBOX_OFFLINE_THRESHOLD: usize = usize::BITS as usize;
 
 #[cfg_attr(feature = "gc", derive(dumpster::Collectable))]
 #[derive(PartialEq, Eq, Debug)]
@@ -77,7 +77,7 @@ impl BitBox {
 
         (id < self.len).then(|| match &self.data {
             Inline(data) => get_bit(*data, id),
-            Offline(data) => get_bit(data[id / (size_of::<usize>() * 8)], id % (size_of::<usize>() * 8)),
+            Offline(data) => get_bit(data[id / usize::BITS as usize], id % usize::BITS as usize),
         })
     }
 

@@ -3,7 +3,7 @@ mod gc;
 #[cfg(feature = "gc")]
 pub use gc::GcContext;
 
-use ariadne::{Report, ReportBuilder, ReportKind};
+use ariadne::ReportBuilder;
 
 use std::ops::{Deref, Range};
 
@@ -78,7 +78,7 @@ pub trait Context: Sized {
     fn register_attribute<A: AttributeKind>(&mut self);
 
     /// Creates a program containing an empty module operation.
-    fn module_program<'ctx>(&'ctx self) -> Self::Program<'ctx>;
+    fn module_program(&self) -> Self::Program<'_>;
 
     /// Applies the provided pattern to the top level operation of the provided program.
     fn apply_pattern<'ctx, P: RewritePattern<Self>>(

@@ -1,10 +1,4 @@
-use std::{
-    error::Error,
-    fmt,
-    io::{Bytes, Read},
-    marker::PhantomData,
-    ops::Deref,
-};
+use std::fmt;
 
 use thiserror::Error;
 
@@ -342,7 +336,13 @@ impl<'src> Lexer<'src> {
                 + 2
                 + self.source[(self.next_position + 2)..]
                     .iter()
-                    .take_while(|&&x| x.is_ascii_alphanumeric() || x == b'.' || x == b'_' || x == b'$' || x == b'-')
+                    .take_while(|&&x| {
+                        x.is_ascii_alphanumeric()
+                            || x == b'.'
+                            || x == b'_'
+                            || x == b'$'
+                            || x == b'-'
+                    })
                     .count()
         } else {
             return Err(LexerError::ExpectedSuffixIdentifier(self.next_position + 1));
@@ -401,7 +401,11 @@ impl<'src> Lexer<'src> {
             Some(b'?') => Ok(Some(self.lex_punctuation(Punctuation::Question))),
             Some(b'|') => Ok(Some(self.lex_punctuation(Punctuation::VerticalBar))),
             Some(b'.') => {
-                if self.source.get(self.next_position + 1..self.next_position + 3) == Some(b"..") {
+                if self
+                    .source
+                    .get(self.next_position + 1..self.next_position + 3)
+                    == Some(b"..")
+                {
                     // Lexing: ...
                     Ok(Some(self.lex_punctuation(Punctuation::Ellipsis)))
                 } else {
@@ -418,7 +422,11 @@ impl<'src> Lexer<'src> {
                 }
             }
             Some(b'{') => {
-                if self.source.get(self.next_position + 1..self.next_position + 3) == Some(b"-#") {
+                if self
+                    .source
+                    .get(self.next_position + 1..self.next_position + 3)
+                    == Some(b"-#")
+                {
                     // Lexing: {-#
                     Ok(Some(self.lex_punctuation(Punctuation::FileMetadataBegin)))
                 } else {
@@ -427,17 +435,28 @@ impl<'src> Lexer<'src> {
                 }
             }
             Some(b'#') => {
-                if self.source.get(self.next_position + 1..self.next_position + 3) == Some(b"-}") {
+                if self
+                    .source
+                    .get(self.next_position + 1..self.next_position + 3)
+                    == Some(b"-}")
+                {
                     // Lexing: #-}
                     Ok(Some(self.lex_punctuation(Punctuation::FileMetadataEnd)))
                 } else {
                     // Lexing: hash-ident
-                    self.lex_prefixed_identifier(TokenKind::HashIdentifier).map(Some)
+                    self.lex_prefixed_identifier(TokenKind::HashIdentifier)
+                        .map(Some)
                 }
             }
-            Some(b'!') => self.lex_prefixed_identifier(TokenKind::ExclamationIdentifier).map(Some),
-            Some(b'^') => self.lex_prefixed_identifier(TokenKind::CaretIdentifier).map(Some),
-            Some(b'%') => self.lex_prefixed_identifier(TokenKind::PercentIdentifier).map(Some),
+            Some(b'!') => self
+                .lex_prefixed_identifier(TokenKind::ExclamationIdentifier)
+                .map(Some),
+            Some(b'^') => self
+                .lex_prefixed_identifier(TokenKind::CaretIdentifier)
+                .map(Some),
+            Some(b'%') => self
+                .lex_prefixed_identifier(TokenKind::PercentIdentifier)
+                .map(Some),
             Some(b'@') => self.lex_symbol().map(Some),
             Some(b'"') => self.lex_string_literal().map(Some),
             Some(c) if c.is_ascii_digit() => self.lex_number().map(Some),

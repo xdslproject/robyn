@@ -1,17 +1,9 @@
-use std::{
-    arch::x86_64,
-    borrow::Borrow,
-    io::Read,
-    marker::PhantomData,
-    ops::{Deref, DerefMut},
-};
 
 use lexer::{Lexer, LexerError, LexicalSpan, Punctuation, Token, TokenKind};
-use thiserror::Error;
 
 use crate::{
     dialect::builtin::ModuleOp,
-    ir::{Accessor, Context, Operation, PatternResult, RewritePattern, Rewriter, SingleUseRewritePattern},
+    ir::{Accessor, Context, Operation, PatternResult, Rewriter, SingleUseRewritePattern},
     utils::u8_to_ascii_or_value,
 };
 

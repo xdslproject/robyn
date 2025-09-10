@@ -27,7 +27,7 @@ declare_operation!(ModuleOp, ModuleOpAccess, ModuleOpOpaque);
 impl OperationKind for ModuleOp {
     operation_defaults!(BuiltinDialect, ModuleOpAccess, ModuleOpOpaque);
 
-    fn valid_access<'rewrite, 'a, C: Context>(op: C::Operation<'rewrite, 'a>) -> bool {
+    fn valid_access<C: Context>(op: C::Operation<'_, '_>) -> bool {
         op.isa::<ModuleOp>() && op.get_region(0).and_then(|r| r.get_block(0)).is_some()
     }
 }
@@ -62,7 +62,7 @@ declare_attr!(StringAttr, StringAttrAccess, StringAttrOpaque);
 impl AttributeKind for StringAttr {
     attr_defaults!(BuiltinDialect, StringAttrAccess, StringAttrOpaque);
 
-    fn valid_access<'rewrite, 'a, C: Context>(attr: C::Attribute<'rewrite, 'a>) -> bool {
+    fn valid_access<C: Context>(attr: C::Attribute<'_, '_>) -> bool {
         attr.isa::<StringAttr>()
             && match attr.data() {
                 AttributeData::Bits(bits) => bits.len() % 8 == 0,
@@ -80,8 +80,8 @@ impl StringAttr {
     }
 }
 
-impl<'rewrite, 'a, C: Context + 'a> StringAttrAccess<'rewrite, 'a, C> {
-    pub fn as_bytes<'data>(&'data self) -> impl AttrData<'data, [u8]> {
+impl<'a, C: Context + 'a> StringAttrAccess<'_, 'a, C> {
+    pub fn as_bytes(&self) -> impl AttrData<'_, [u8]> {
         let AttributeData::Bits(bits) = self.as_ref().data() else {
             unreachable!("verified")
         };

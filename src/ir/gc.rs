@@ -3,12 +3,9 @@ use std::{
     borrow::Borrow,
     cell::{Ref, RefCell},
     collections::{HashMap, HashSet},
-    ffi::{OsStr, OsString},
     ops::Deref,
-    rc::Rc,
 };
 
-use ariadne::{Report, ReportKind, Source};
 use dumpster::{unsync::Gc, Collectable};
 
 use crate::{
@@ -24,7 +21,7 @@ use crate::{
 };
 
 use super::{
-    AttrData, AttributeData, BlockPosition, Diagnostic, DictionaryData, OpaqueAttributeData, PatternResult,
+    AttrData, AttributeData, BlockPosition, DictionaryData, OpaqueAttributeData, PatternResult,
     SingleUseRewritePattern,
 };
 
@@ -38,6 +35,12 @@ struct GcContextInner {
 
 #[derive(Collectable, Clone)]
 pub struct GcContext(Gc<RefCell<GcContextInner>>);
+
+impl Default for GcContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl GcContext {
     pub fn new() -> GcContext {
@@ -102,21 +105,21 @@ impl Context for GcContext {
         );
     }
 
-    fn module_program<'ctx>(&'ctx self) -> GcProgram {
+    fn module_program(&self) -> GcProgram {
         GcProgram {
             op: ModuleOp::create::<GcContext>(&GcRewriter { ctx: self.clone() }, &[]),
         }
     }
 
-    fn apply_pattern<'ctx, P: RewritePattern<Self>>(&'ctx self, program: &mut GcProgram, pattern: &P) -> PatternResult {
+    fn apply_pattern<P: RewritePattern<Self>>(&self, program: &mut GcProgram, pattern: &P) -> PatternResult {
         pattern.match_and_rewrite(GcAccessor {
             ctx: self.clone(),
             root: program.op.clone(),
         })
     }
 
-    fn apply_single_use_pattern<'ctx, P: SingleUseRewritePattern<Self>>(
-        &'ctx self,
+    fn apply_single_use_pattern<P: SingleUseRewritePattern<Self>>(
+        &self,
         program: &mut GcProgram,
         pattern: P,
     ) -> PatternResult {
@@ -129,7 +132,7 @@ impl Context for GcContext {
 
 pub struct GcAttrData<'data, T: ?Sized + 'data>(Ref<'data, T>);
 
-impl<'data, T: ?Sized> Deref for GcAttrData<'data, T> {
+impl<T: ?Sized> Deref for GcAttrData<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -147,7 +150,7 @@ impl<'data, T: ?Sized> AttrData<'data, T> for GcAttrData<'data, T> {
     }
 }
 
-impl<'rewrite, 'a> DictionaryData<'rewrite, 'a, GcContext> for HashMap<String, GcAttributeRef> {
+impl DictionaryData<'_, '_, GcContext> for HashMap<String, GcAttributeRef> {
     fn get(&self, data: &str) -> Option<GcAttributeRef> {
         self.get(data).cloned()
     }
@@ -186,7 +189,7 @@ pub struct GcAccessor {
     root: GcOperationRef,
 }
 
-impl<'rewrite> Accessor<'rewrite, GcContext> for GcAccessor {
+impl Accessor<'_, GcContext> for GcAccessor {
     fn get_root(&self) -> GcOperationRef {
         self.root.clone()
     }
@@ -296,7 +299,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         assert!(op.valid());
         assert!(at_start_of.valid());
         if let Some(first) = &at_start_of.get().first {
-            link_ops(&op, &first);
+            link_ops(&op, first);
         }
         op.get_mut().parent = Some(at_start_of.clone());
         at_start_of.get_mut().first = Some(op);
@@ -306,7 +309,7 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
         assert!(op.valid());
         assert!(at_end_of.valid());
         if let Some(last) = &at_end_of.get().last {
-            link_ops(&last, &op);
+            link_ops(last, &op);
         }
         op.get_mut().parent = Some(at_end_of.clone());
         at_end_of.get_mut().last = Some(op);
@@ -447,18 +450,18 @@ impl<'rewrite> Rewriter<'rewrite, GcContext> for GcRewriter {
     }
 
     fn set_operand(&self, op: GcOperationRef, operand_pos: super::OperandPosition, operand: GcValueRef) {
-        assert!(op.get().operands.len() > operand_pos as usize);
-        op.get_mut().operands[operand_pos as usize] = operand;
+        assert!(op.get().operands.len() > operand_pos);
+        op.get_mut().operands[operand_pos] = operand;
     }
 
     fn set_successor(&self, op: GcOperationRef, successor_pos: super::SuccessorPosition, successor: GcBlockRef) {
-        assert!(op.get().successors.len() > successor_pos as usize);
-        op.get_mut().successors[successor_pos as usize] = successor;
+        assert!(op.get().successors.len() > successor_pos);
+        op.get_mut().successors[successor_pos] = successor;
     }
 
     fn set_region(&self, op: GcOperationRef, region_pos: super::RegionPosition, region: GcRegionRef) {
-        assert!(op.get().regions.len() > region_pos as usize);
-        op.get_mut().regions[region_pos as usize] = region;
+        assert!(op.get().regions.len() > region_pos);
+        op.get_mut().regions[region_pos] = region;
     }
 }
 
@@ -740,7 +743,7 @@ impl GcBlockRef {
     }
 }
 
-impl<'rewrite, 'a> Block<'rewrite, 'a, GcContext> for GcBlockRef {
+impl Block<'_, '_, GcContext> for GcBlockRef {
     fn ops(&self) -> impl Iterator<Item = GcOperationRef> {
         self.get().ops()
     }
@@ -789,7 +792,7 @@ impl GcRegionRef {
     }
 }
 
-impl<'rewrite, 'a> Region<'rewrite, 'a, GcContext> for GcRegionRef {
+impl Region<'_, '_, GcContext> for GcRegionRef {
     fn get_block(&self, block: BlockPosition) -> Option<GcBlockRef> {
         self.get().blocks.get(block).cloned()
     }
@@ -809,7 +812,7 @@ pub struct GcValue {
     uses: HashSet<(GcAttributeRef, OperandPosition)>,
 }
 
-unsafe impl<'rewrite, 'a> Collectable for ValueOwner<'rewrite, 'a, GcContext> {
+unsafe impl Collectable for ValueOwner<'_, '_, GcContext> {
     fn accept<V: dumpster::Visitor>(&self, visitor: &mut V) -> Result<(), ()> {
         match self {
             Self::Placeholder => Ok(()),
@@ -850,7 +853,7 @@ impl GcValueRef {
     }
 }
 
-impl<'rewrite, 'a> Value<'rewrite, 'a, GcContext> for GcValueRef {
+impl Value<'_, '_, GcContext> for GcValueRef {
     fn opaque(&self) -> GcValueRef {
         self.clone()
     }
